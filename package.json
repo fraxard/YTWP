@@ -1,0 +1,8 @@
+{
+  "name": "watch-party",
+  "private": true,
+  "scripts": {
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev"
+  }
+}
