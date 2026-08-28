@@ -1372,3 +1372,150 @@
     font-size: 0.95rem;
   }
 }
+
+
+/* Theme Toggle */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+/* Theme toggle button */
+.theme-toggle {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-line);
+  border-radius: 50%;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.theme-toggle:hover {
+  background: var(--surface-secondary);
+  border-color: var(--accent-sage);
+  transform: rotate(8deg);
+}
+
+.theme-toggle:active {
+  transform: scale(0.94);
+}
+
+.theme-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+
+/* =========================================================
+   Dark Theme
+   ========================================================= */
+
+.app-shell[data-theme="dark"] {
+  --canvas-bg: #141714;
+  --surface-base: #1c201b;
+  --surface-secondary: #252a24;
+  --surface-subtle: #20251f;
+
+  --accent-olive-dark: #d8dfd2;
+  --accent-olive-mid: #a8b5a1;
+  --accent-sage: #84967e;
+  --accent-khaki: #4b5548;
+
+  --text-primary: #f0f2ed;
+  --text-secondary: #b3bbb0;
+  --text-muted: #7f887d;
+
+  --border-line: #353c33;
+  --border-dark: #c7cec3;
+  --border-dotted: #4a5347;
+
+  --status-live: #6fa06f;
+  --status-err: #d06d61;
+}
+
+
+/* =========================================================
+   Dark Theme — Specific Elements
+   ========================================================= */
+
+.app-shell[data-theme="dark"] .theme-toggle {
+  background: var(--surface-secondary);
+  border-color: var(--border-line);
+  color: var(--text-primary);
+}
+
+.app-shell[data-theme="dark"] .theme-toggle:hover {
+  background: #30372e;
+  border-color: var(--accent-sage);
+}
+
+
+/* Dark mode chat host message */
+.app-shell[data-theme="dark"] .chat-message.chat-message-host {
+  background: #30362e;
+  border-color: #30362e;
+  color: #f0f2ed;
+}
+
+.app-shell[data-theme="dark"]
+.chat-message.chat-message-host
+.chat-message-user,
+.app-shell[data-theme="dark"]
+.chat-message.chat-message-host
+.chat-message-body {
+  color: #f0f2ed;
+}
+
+.app-shell[data-theme="dark"]
+.chat-message.chat-message-host
+.chat-message-role,
+.app-shell[data-theme="dark"]
+.chat-message.chat-message-host
+.chat-message-time {
+  color: #b8c0b5;
+}
+
+
+/* Dark mode floating reactions */
+.app-shell[data-theme="dark"] .floating-reaction {
+  background: rgba(30, 34, 29, 0.96);
+  border-color: rgba(120, 132, 116, 0.65);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+
+/* Dark mode leave button */
+.app-shell[data-theme="dark"] .btn-leave-party {
+  border-color: #66413c;
+}
+
+
+/* Smooth global theme transition */
+.app-shell,
+.app-shell *,
+.app-shell *::before,
+.app-shell *::after {
+  transition-property:
+    background-color,
+    border-color,
+    color,
+    box-shadow;
+  transition-duration: 180ms;
+  transition-timing-function: ease;
+}
