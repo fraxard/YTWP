@@ -12,37 +12,49 @@ const ROLE_BADGE = {
 
 function RoleBadge({ role }) {
   const badge = ROLE_BADGE[role] ?? ROLE_BADGE.participant;
+
   return (
-    <span style={{
-      display: "inline-block",
-      padding: "2px 6px",
-      borderRadius: "4px",
-      fontSize: "0.675rem",
-      fontWeight: "700",
-      letterSpacing: "0.04em",
-      textTransform: "uppercase",
-      background: badge.background,
-      color: badge.color,
-      marginLeft: "auto",
-    }}>
+    <span
+      style={{
+        display: "inline-block",
+        padding: "2px 6px",
+        borderRadius: "4px",
+        fontSize: "0.675rem",
+        fontWeight: "700",
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        background: badge.background,
+        color: badge.color,
+        marginLeft: "auto",
+      }}
+    >
       {badge.label}
     </span>
   );
 }
 
-function ParticipantRow({ participant, isMe, isHost, onPromote, onDemote }) {
+function ParticipantRow({
+  participant,
+  isMe,
+  isHost,
+  onPromote,
+  onDemote,
+  onRemove,
+}) {
   const canModify = isHost && !isMe && participant.role !== "host";
   const initials = (participant.username || "U").slice(0, 2).toUpperCase();
 
   return (
     <li className={`participant-item ${isMe ? "is-self" : ""}`}>
       <div className="avatar-initials">{initials}</div>
+
       <div className="participant-details">
         <span className="participant-name">
           {participant.username}
           {isMe && <span className="self-tag-text">(you)</span>}
         </span>
       </div>
+
       <RoleBadge role={participant.role} />
 
       {canModify && participant.role === "participant" && (
@@ -50,7 +62,11 @@ function ParticipantRow({ participant, isMe, isHost, onPromote, onDemote }) {
           onClick={() => onPromote(participant.id)}
           title="Promote to Moderator"
           className="btn-role-action"
-          style={{ background: "#52634e", color: "#fff", borderColor: "#52634e" }}
+          style={{
+            background: "#52634e",
+            color: "#fff",
+            borderColor: "#52634e",
+          }}
         >
           Make Mod
         </button>
@@ -61,20 +77,45 @@ function ParticipantRow({ participant, isMe, isHost, onPromote, onDemote }) {
           onClick={() => onDemote(participant.id)}
           title="Remove Moderator"
           className="btn-role-action"
-          style={{ background: "#e2e6dc", color: "#586156" }}
+          style={{
+            background: "#e2e6dc",
+            color: "#586156",
+          }}
         >
           Remove Mod
+        </button>
+      )}
+
+      {canModify && (
+        <button
+          onClick={() => onRemove(participant.id)}
+          title="Remove Participant"
+          className="btn-role-action"
+          style={{
+            background: "#7a3f3f",
+            color: "#fff",
+            borderColor: "#7a3f3f",
+          }}
+        >
+          Remove
         </button>
       )}
     </li>
   );
 }
 
-export default function Room({ roomId, initialParticipants, initialVideoState, onLeave }) {
+export default function Room({
+  roomId,
+  initialParticipants,
+  initialVideoState,
+  onLeave,
+}) {
   const [participants, setParticipants] = useState(initialParticipants);
+
   const [videoId, setVideoId] = useState(
     initialVideoState?.videoId || DEFAULT_VIDEO_ID
   );
+
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState("");
 
@@ -87,15 +128,21 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
   const isHost = myRole === "host";
 
   const canControlRef = useRef(canControl);
-  useEffect(() => { canControlRef.current = canControl; }, [canControl]);
+
+  useEffect(() => {
+    canControlRef.current = canControl;
+  }, [canControl]);
 
   function safeCall(fn) {
-    if (playerRef.current && typeof playerRef.current.playVideo === "function") {
+    if (
+      playerRef.current &&
+      typeof playerRef.current.playVideo === "function"
+    ) {
       fn();
     }
   }
 
-  // ── Socket events ─────────────────────────────────────────────────────────
+  // ── Socket events ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     function onUserJoined({ participant }) {
@@ -104,30 +151,42 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
         return [...prev, participant];
       });
     }
+
     function onUserLeft({ participantId }) {
-      setParticipants((prev) => prev.filter((p) => p.id !== participantId));
-    }
-    function onRoleUpdated({ targetId, role }) {
       setParticipants((prev) =>
-        prev.map((p) => (p.id === targetId ? { ...p, role } : p))
+        prev.filter((p) => p.id !== participantId)
       );
     }
+
+    function onRoleUpdated({ targetId, role }) {
+      setParticipants((prev) =>
+        prev.map((p) =>
+          p.id === targetId ? { ...p, role } : p
+        )
+      );
+    }
+
     function onVideoChanged({ videoId: newId }) {
       setVideoId(newId);
     }
+
     function onPlay() {
-      suppressRef.current = { type: "play" };
+      suppressRef.current = "play";
       safeCall(() => playerRef.current.playVideo());
     }
 
     function onPause() {
-      suppressRef.current = { type: "pause" };
+      suppressRef.current = "pause";
       safeCall(() => playerRef.current.pauseVideo());
     }
 
     function onSeek({ time }) {
-      suppressRef.current = { type: "seek", time };
+      suppressRef.current = "seek";
       safeCall(() => playerRef.current.seekTo(time, true));
+    }
+
+    function onParticipantRemoved() {
+      onLeave();
     }
 
     socket.on("user_joined", onUserJoined);
@@ -137,6 +196,7 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
     socket.on("play", onPlay);
     socket.on("pause", onPause);
     socket.on("seek", onSeek);
+    socket.on("participant_removed", onParticipantRemoved);
 
     return () => {
       socket.off("user_joined", onUserJoined);
@@ -146,13 +206,25 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
       socket.off("play", onPlay);
       socket.off("pause", onPause);
       socket.off("seek", onSeek);
+      socket.off("participant_removed", onParticipantRemoved);
     };
-  }, []);
+  }, [onLeave]);
 
   // ── YouTube state change listener ─────────────────────────────────────────
 
   useEffect(() => {
     function onYtStateChange(e) {
+      if (suppressRef.current) {
+        if (
+          (suppressRef.current === "play" && e.detail.state === 1) ||
+          (suppressRef.current === "pause" && e.detail.state === 2)
+        ) {
+          suppressRef.current = false;
+        }
+
+        return;
+      }
+
       if (!canControlRef.current) return;
 
       const YT_PLAYING = 1;
@@ -170,28 +242,46 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
     }
 
     window.addEventListener("yt-state-change", onYtStateChange);
-    return () => window.removeEventListener("yt-state-change", onYtStateChange);
+
+    return () => {
+      window.removeEventListener("yt-state-change", onYtStateChange);
+    };
   }, []);
 
   // ── User actions ──────────────────────────────────────────────────────────
 
   function handleChangeVideo() {
     setUrlError("");
+
     const id = extractVideoId(urlInput);
+
     if (!id) {
-      setUrlError("Invalid YouTube URL. Paste a full youtube.com or youtu.be link.");
+      setUrlError(
+        "Invalid YouTube URL. Paste a full youtube.com or youtu.be link."
+      );
       return;
     }
+
     socket.emit("change_video", { videoId: id });
     setUrlInput("");
   }
 
   function handlePromote(targetId) {
-    socket.emit("assign_role", { targetId, role: "moderator" });
+    socket.emit("assign_role", {
+      targetId,
+      role: "moderator",
+    });
   }
 
   function handleDemote(targetId) {
-    socket.emit("assign_role", { targetId, role: "participant" });
+    socket.emit("assign_role", {
+      targetId,
+      role: "participant",
+    });
+  }
+
+  function handleRemove(targetId) {
+    socket.emit("remove_participant", { targetId });
   }
 
   function handleLeave() {
@@ -205,7 +295,9 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
       <aside className="column-left-participants">
         <div className="panel-header-bar">
           <span className="panel-header-title">Participants</span>
-          <span className="panel-count-tag">[{participants.length}]</span>
+          <span className="panel-count-tag">
+            [{participants.length}]
+          </span>
         </div>
 
         <ul className="participants-list-wrap">
@@ -217,6 +309,7 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
               isHost={isHost}
               onPromote={handlePromote}
               onDemote={handleDemote}
+              onRemove={handleRemove}
             />
           ))}
         </ul>
@@ -226,7 +319,11 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
             <span className="room-code-label">Room ID</span>
             <span className="room-code-val">{roomId}</span>
           </div>
-          <button className="btn-leave-party" onClick={handleLeave}>
+
+          <button
+            className="btn-leave-party"
+            onClick={handleLeave}
+          >
             Leave Session
           </button>
         </div>
@@ -251,14 +348,23 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
                 placeholder="Paste YouTube link to change video..."
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleChangeVideo()}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && handleChangeVideo()
+                }
                 className="stage-url-input"
               />
-              <button onClick={handleChangeVideo} className="stage-btn-load">
+
+              <button
+                onClick={handleChangeVideo}
+                className="stage-btn-load"
+              >
                 Change Video
               </button>
             </div>
-            {urlError && <p className="url-error-msg">{urlError}</p>}
+
+            {urlError && (
+              <p className="url-error-msg">{urlError}</p>
+            )}
           </div>
         ) : (
           <p className="role-banner-note">
@@ -277,7 +383,10 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
         <div className="chat-flow-container">
           <div className="chat-placeholder-box">
             <p>Session Log</p>
-            <span>Live chat and reactions will appear here in the next release.</span>
+            <span>
+              Live chat and reactions will appear here in the next
+              release.
+            </span>
           </div>
         </div>
 

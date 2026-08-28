@@ -52,8 +52,6 @@ function handleLeave(socket) {
   socket.roomId = null;
 }
 
-// Returns the participant if they have permission, otherwise emits
-// permission_denied and returns null.
 function authorize(socket, action) {
   const room = rooms.getRoom(socket.roomId);
   if (!room) return null;
@@ -75,7 +73,6 @@ function authorize(socket, action) {
 io.on("connection", (socket) => {
   console.log(`[connect]    ${socket.id}`);
 
-  // create_room ──────────────────────────────────────────────────────────────
   socket.on("create_room", ({ username }) => {
     if (!username || typeof username !== "string" || !username.trim()) {
       socket.emit("error", { message: "Username is required." });
@@ -94,7 +91,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // join_room ────────────────────────────────────────────────────────────────
   socket.on("join_room", ({ roomId, username }) => {
     if (!username || typeof username !== "string" || !username.trim()) {
       socket.emit("error", { message: "Username is required." });
@@ -117,10 +113,8 @@ io.on("connection", (socket) => {
     socket.to(roomId).emit("user_joined", { participant });
   });
 
-  // leave_room ───────────────────────────────────────────────────────────────
   socket.on("leave_room", () => handleLeave(socket));
 
-  // play ─────────────────────────────────────────────────────────────────────
   socket.on("play", () => {
     if (!authorize(socket, "play")) return;
     const room = rooms.getRoom(socket.roomId);
@@ -130,7 +124,6 @@ io.on("connection", (socket) => {
     socket.to(socket.roomId).emit("play");
   });
 
-  // pause ────────────────────────────────────────────────────────────────────
   socket.on("pause", () => {
     if (!authorize(socket, "pause")) return;
     const room = rooms.getRoom(socket.roomId);
@@ -140,7 +133,6 @@ io.on("connection", (socket) => {
     socket.to(socket.roomId).emit("pause");
   });
 
-  // seek ─────────────────────────────────────────────────────────────────────
   socket.on("seek", ({ time }) => {
     if (!authorize(socket, "seek")) return;
     if (typeof time !== "number" || time < 0) return;
@@ -151,7 +143,6 @@ io.on("connection", (socket) => {
     socket.to(socket.roomId).emit("seek", { time });
   });
 
-  // change_video ─────────────────────────────────────────────────────────────
   socket.on("change_video", ({ videoId }) => {
     if (!authorize(socket, "change_video")) return;
     if (!videoId || typeof videoId !== "string") {
@@ -167,44 +158,68 @@ io.on("connection", (socket) => {
     io.to(socket.roomId).emit("video_changed", { videoId });
   });
 
-  // assign_role ──────────────────────────────────────────────────────────────
   socket.on("assign_role", ({ targetId, role }) => {
-    // Only host can assign roles
     if (!authorize(socket, "assign_role")) return;
 
-    // Only "moderator" and "participant" are assignable (host is not transferable)
     const ASSIGNABLE_ROLES = ["moderator", "participant"];
     if (!ASSIGNABLE_ROLES.includes(role)) {
-      socket.emit("error", { message: "Invalid role. Must be 'moderator' or 'participant'." });
+      socket.emit("error", { message: "Invalid role." });
       return;
     }
 
     const room = rooms.getRoom(socket.roomId);
     if (!room) return;
 
-    // Target must be in the same room
     const target = rooms.getParticipant(socket.roomId, targetId);
     if (!target) {
       socket.emit("error", { message: "Participant not found in this room." });
       return;
     }
 
-    // Cannot change the host's role
     if (target.role === "host") {
       socket.emit("error", { message: "Cannot change the host's role." });
       return;
     }
 
-    // No-op if role is already set
     if (target.role === role) return;
 
     target.role = role;
     console.log(`[assign_role] ${socket.id} set ${targetId} → ${role} in room ${socket.roomId}`);
-
     io.to(socket.roomId).emit("role_updated", { targetId, role });
   });
 
-  // disconnect ───────────────────────────────────────────────────────────────
+  socket.on("remove_participant", ({ targetId }) => {
+    const roomId = socket.roomId;
+    if (!authorize(socket, "remove_participant")) return;
+
+    const room = rooms.getRoom(roomId);
+    if (!room) return;
+
+    const target = rooms.getParticipant(roomId, targetId);
+    if (!target) {
+      socket.emit("error", { message: "Participant not found in this room." });
+      return;
+    }
+
+    if (target.role === "host") {
+      socket.emit("error", { message: "Cannot remove the host." });
+      return;
+    }
+
+    console.log(`[remove_participant] ${socket.id} removed ${targetId} from room ${roomId}`);
+
+    // Notify the removed participant first, then clean up
+    const targetSocket = io.sockets.sockets.get(targetId);
+    if (targetSocket) {
+      targetSocket.emit("participant_removed");
+      targetSocket.leave(roomId);
+      targetSocket.roomId = null;
+    }
+
+    rooms.removeParticipant(roomId, targetId);
+    io.to(roomId).emit("user_left", { participantId: targetId });
+  });
+
   socket.on("disconnect", () => {
     handleLeave(socket);
     console.log(`[disconnect] ${socket.id}`);
