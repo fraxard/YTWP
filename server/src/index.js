@@ -467,6 +467,46 @@ io.on("connection", (socket) => {
     );
   });
 
+  // ── Emoji Reactions ────────────────────────────────────────────────────────
+
+  socket.on("emoji_reaction", ({ emoji }) => {
+    const roomId = socket.roomId;
+
+    if (!roomId) {
+      return;
+    }
+
+    const participant = rooms.getParticipant(
+      roomId,
+      socket.id
+    );
+
+    if (!participant) {
+      return;
+    }
+
+    const ALLOWED_EMOJIS = [
+      "❤️",
+      "😂",
+      "😮",
+      "🔥",
+      "👏",
+      "💀",
+    ];
+
+    if (!ALLOWED_EMOJIS.includes(emoji)) {
+      return;
+    }
+
+    io.to(roomId).emit("emoji_reaction", {
+      id: `${socket.id}-${Date.now()}`,
+      userId: socket.id,
+      username: participant.username,
+      emoji,
+      timestamp: Date.now(),
+    });
+  });
+
   // ── Disconnect ───────────────────────────────────────────────────────────
 
   socket.on("disconnect", () => {

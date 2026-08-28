@@ -195,6 +195,12 @@ export default function Room({
   const [chatInput, setChatInput] =
     useState("");
 
+  const [reactions, setReactions] =
+    useState([]);
+
+  const reactionTimersRef =
+    useRef([]);
+
   const playerRef =
     useRef(null);
 
@@ -345,6 +351,25 @@ export default function Room({
       );
     }
 
+    function onEmojiReaction(
+      reaction
+    ) {
+      setReactions((prev) => [
+        ...prev,
+        reaction,
+      ]);
+
+      const timer = setTimeout(() => {
+        setReactions((prev) =>
+          prev.filter(
+            (item) => item.id !== reaction.id
+          )
+        );
+      }, 5000);
+
+      reactionTimersRef.current.push(timer);
+    }
+
     socket.on(
       "user_joined",
       onUserJoined
@@ -388,6 +413,11 @@ export default function Room({
     socket.on(
       "chat_message",
       onChatMessage
+    );
+
+    socket.on(
+      "emoji_reaction",
+      onEmojiReaction
     );
 
     return () => {
@@ -435,6 +465,16 @@ export default function Room({
         "chat_message",
         onChatMessage
       );
+
+      socket.off(
+        "emoji_reaction",
+        onEmojiReaction
+      );
+
+      reactionTimersRef.current.forEach(
+        (timer) => clearTimeout(timer)
+      );
+      reactionTimersRef.current = [];
     };
   }, [onLeave]);
 
@@ -585,6 +625,12 @@ export default function Room({
     );
   }
 
+  function handleEmojiReaction(emoji) {
+    socket.emit("emoji_reaction", {
+      emoji,
+    });
+  }
+
   function handleSendMessage() {
     const message =
       chatInput.trim();
@@ -708,6 +754,24 @@ export default function Room({
               suppressRef
             }
           />
+
+          <div className="emoji-bar">
+            {["❤️", "😂", "😮", "🔥", "👏", "💀"].map(
+              (emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="emoji-button"
+                  onClick={() =>
+                    handleEmojiReaction(emoji)
+                  }
+                  aria-label={`React with ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              )
+            )}
+          </div>
         </div>
 
         {canControl ? (
@@ -779,6 +843,25 @@ export default function Room({
           className="chat-flow-container"
           ref={chatMessagesRef}
         >
+
+          <div className="emoji-reactions" aria-live="polite">
+            {reactions.map((reaction, index) => (
+              <div
+                key={reaction.id}
+                className="floating-reaction"
+                style={{
+                  "--reaction-offset": `${(index % 3 - 1) * 28}px`,
+                }}
+              >
+                <span className="floating-reaction-emoji">
+                  {reaction.emoji}
+                </span>
+                <span className="floating-reaction-name">
+                  {reaction.username}
+                </span>
+              </div>
+            ))}
+          </div>
 
           {messages.length === 0 ? (
             <div className="chat-empty-state">
