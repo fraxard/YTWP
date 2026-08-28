@@ -5,9 +5,9 @@ import VideoPlayer, { extractVideoId } from "./VideoPlayer";
 const DEFAULT_VIDEO_ID = "dQw4w9WgXcQ";
 
 const ROLE_BADGE = {
-  host:        { label: "Host",        background: "#1d4ed8", color: "#fff" },
-  moderator:   { label: "Moderator",   background: "#7e22ce", color: "#fff" },
-  participant: { label: "Participant",  background: "#e5e7eb", color: "#374151" },
+  host:        { label: "Host",       background: "#212e21", color: "#f7f8f5" },
+  moderator:   { label: "Moderator",  background: "#52634e", color: "#f7f8f5" },
+  participant: { label: "Member",     background: "#e2e6dc", color: "#586156" },
 };
 
 function RoleBadge({ role }) {
@@ -15,34 +15,57 @@ function RoleBadge({ role }) {
   return (
     <span style={{
       display: "inline-block",
-      padding: "2px 10px",
-      borderRadius: "999px",
-      fontSize: "0.75rem",
-      fontWeight: "600",
+      padding: "2px 6px",
+      borderRadius: "4px",
+      fontSize: "0.675rem",
+      fontWeight: "700",
+      letterSpacing: "0.04em",
+      textTransform: "uppercase",
       background: badge.background,
       color: badge.color,
-      marginLeft: "8px",
-      verticalAlign: "middle",
+      marginLeft: "auto",
     }}>
       {badge.label}
     </span>
   );
 }
 
-function ParticipantRow({ participant, isMe }) {
+function ParticipantRow({ participant, isMe, isHost, onPromote, onDemote }) {
+  const canModify = isHost && !isMe && participant.role !== "host";
+  const initials = (participant.username || "U").slice(0, 2).toUpperCase();
+
   return (
-    <li style={{
-      display: "flex",
-      alignItems: "center",
-      padding: "8px 0",
-      borderBottom: "1px solid #f0f0f0",
-      listStyle: "none",
-    }}>
-      <span style={{ fontWeight: isMe ? "700" : "400" }}>
-        {participant.username}
-        {isMe && <span style={{ color: "#888", fontWeight: 400, marginLeft: 4 }}>(you)</span>}
-      </span>
+    <li className={`participant-item ${isMe ? "is-self" : ""}`}>
+      <div className="avatar-initials">{initials}</div>
+      <div className="participant-details">
+        <span className="participant-name">
+          {participant.username}
+          {isMe && <span className="self-tag-text">(you)</span>}
+        </span>
+      </div>
       <RoleBadge role={participant.role} />
+
+      {canModify && participant.role === "participant" && (
+        <button
+          onClick={() => onPromote(participant.id)}
+          title="Promote to Moderator"
+          className="btn-role-action"
+          style={{ background: "#52634e", color: "#fff", borderColor: "#52634e" }}
+        >
+          Make Mod
+        </button>
+      )}
+
+      {canModify && participant.role === "moderator" && (
+        <button
+          onClick={() => onDemote(participant.id)}
+          title="Remove Moderator"
+          className="btn-role-action"
+          style={{ background: "#e2e6dc", color: "#586156" }}
+        >
+          Remove Mod
+        </button>
+      )}
     </li>
   );
 }
@@ -59,7 +82,12 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
   const suppressRef = useRef(false);
 
   const myParticipant = participants.find((p) => p.id === socket.id);
-  const canControl = myParticipant?.role === "host";
+  const myRole = myParticipant?.role ?? "participant";
+  const canControl = myRole === "host" || myRole === "moderator";
+  const isHost = myRole === "host";
+
+  const canControlRef = useRef(canControl);
+  useEffect(() => { canControlRef.current = canControl; }, [canControl]);
 
   function safeCall(fn) {
     if (playerRef.current && typeof playerRef.current.playVideo === "function") {
@@ -84,11 +112,10 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
         prev.map((p) => (p.id === targetId ? { ...p, role } : p))
       );
     }
-    function onVideoChanged({ videoId }) {
-      setVideoId(videoId);
+    function onVideoChanged({ videoId: newId }) {
+      setVideoId(newId);
     }
     function onPlay() {
-      // suppressRef prevents the resulting onStateChange from emitting back
       suppressRef.current = true;
       safeCall(() => playerRef.current.playVideo());
     }
@@ -97,8 +124,6 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
       safeCall(() => playerRef.current.pauseVideo());
     }
     function onSeek({ time }) {
-      // seekTo does not trigger onStateChange, so no suppress needed —
-      // but we set it anyway in case the player fires a buffering event
       suppressRef.current = true;
       safeCall(() => playerRef.current.seekTo(time, true));
     }
@@ -122,17 +147,16 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
     };
   }, []);
 
-  // ── YouTube user actions → server ─────────────────────────────────────────
+  // ── YouTube state change listener ─────────────────────────────────────────
 
   useEffect(() => {
     function onYtStateChange(e) {
-      if (!canControl) return;
+      if (!canControlRef.current) return;
 
       const YT_PLAYING = 1;
       const YT_PAUSED  = 2;
 
       if (e.detail.state === YT_PLAYING) {
-        // Emit current time with play so server state stays accurate
         const time = playerRef.current?.getCurrentTime?.() ?? 0;
         socket.emit("seek", { time });
         socket.emit("play");
@@ -145,7 +169,7 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
 
     window.addEventListener("yt-state-change", onYtStateChange);
     return () => window.removeEventListener("yt-state-change", onYtStateChange);
-  }, [canControl]);
+  }, []);
 
   // ── User actions ──────────────────────────────────────────────────────────
 
@@ -160,88 +184,110 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
     setUrlInput("");
   }
 
+  function handlePromote(targetId) {
+    socket.emit("assign_role", { targetId, role: "moderator" });
+  }
+
+  function handleDemote(targetId) {
+    socket.emit("assign_role", { targetId, role: "participant" });
+  }
+
   function handleLeave() {
     socket.emit("leave_room");
     onLeave();
   }
 
   return (
-    <div style={{ fontFamily: "sans-serif", maxWidth: "800px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "4px" }}>
-        <h2 style={{ margin: 0 }}>Room</h2>
-        <code style={{
-          background: "#2f3031",
-          padding: "4px 10px",
-          borderRadius: "6px",
-          fontSize: "1.1rem",
-          letterSpacing: "2px",
-          fontWeight: "700",
-        }}>
-          {roomId}
-        </code>
-      </div>
-      <p style={{ color: "#666", marginTop: "4px", marginBottom: "20px", fontSize: "0.9rem" }}>
-        Your role: <strong>{myParticipant?.role ?? "—"}</strong>
-      </p>
+    <div className="party-grid-container">
+      {/* Left Column: Participants */}
+      <aside className="column-left-participants">
+        <div className="panel-header-bar">
+          <span className="panel-header-title">Participants</span>
+          <span className="panel-count-tag">[{participants.length}]</span>
+        </div>
 
-      <VideoPlayer
-        videoId={videoId}
-        controls={canControl}
-        playerRef={playerRef}
-        suppressRef={suppressRef}
-      />
+        <ul className="participants-list-wrap">
+          {participants.map((p) => (
+            <ParticipantRow
+              key={p.id}
+              participant={p}
+              isMe={p.id === socket.id}
+              isHost={isHost}
+              onPromote={handlePromote}
+              onDemote={handleDemote}
+            />
+          ))}
+        </ul>
 
-      {canControl && (
-        <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <input
-            type="text"
-            placeholder="Paste a YouTube URL"
-            value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleChangeVideo()}
-            style={{ flex: 1, minWidth: "200px", padding: "8px", borderRadius: "6px", border: "1px solid #d1d5db" }}
-          />
-          <button
-            onClick={handleChangeVideo}
-            style={{
-              padding: "8px 16px",
-              background: "#1d4ed8",
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              cursor: "pointer",
-            }}
-          >
-            Change Video
+        <div className="room-left-footer">
+          <div className="room-code-display">
+            <span className="room-code-label">Room ID</span>
+            <span className="room-code-val">{roomId}</span>
+          </div>
+          <button className="btn-leave-party" onClick={handleLeave}>
+            Leave Session
           </button>
         </div>
-      )}
-      {urlError && (
-        <p style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "6px" }}>{urlError}</p>
-      )}
+      </aside>
 
-      <h3 style={{ marginTop: "24px", marginBottom: "8px" }}>
-        Participants <span style={{ color: "#888", fontWeight: 400 }}>({participants.length})</span>
-      </h3>
-      <ul style={{ padding: 0, margin: "0 0 24px 0" }}>
-        {participants.map((p) => (
-          <ParticipantRow key={p.id} participant={p} isMe={p.id === socket.id} />
-        ))}
-      </ul>
+      {/* Middle Column: Main Video Stage */}
+      <section className="column-middle-video">
+        <div className="video-frame-container">
+          <VideoPlayer
+            videoId={videoId}
+            controls={canControl}
+            playerRef={playerRef}
+            suppressRef={suppressRef}
+          />
+        </div>
 
-      <button
-        onClick={handleLeave}
-        style={{
-          padding: "8px 16px",
-          background: "#ef4444",
-          color: "#fff",
-          border: "none",
-          borderRadius: "6px",
-          cursor: "pointer",
-        }}
-      >
-        Leave Room
-      </button>
+        {canControl ? (
+          <div className="stage-controls-card">
+            <div className="stage-input-group">
+              <input
+                type="text"
+                placeholder="Paste YouTube link to change video..."
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleChangeVideo()}
+                className="stage-url-input"
+              />
+              <button onClick={handleChangeVideo} className="stage-btn-load">
+                Change Video
+              </button>
+            </div>
+            {urlError && <p className="url-error-msg">{urlError}</p>}
+          </div>
+        ) : (
+          <p className="role-banner-note">
+            Synced with room host & moderators.
+          </p>
+        )}
+      </section>
+
+      {/* Right Column: Chat Panel */}
+      <aside className="column-right-chat">
+        <div className="panel-header-bar">
+          <span className="panel-header-title">Session Feed</span>
+          <span className="chat-live-badge">[ONLINE]</span>
+        </div>
+
+        <div className="chat-flow-container">
+          <div className="chat-placeholder-box">
+            <p>Session Log</p>
+            <span>Live chat and reactions will appear here in the next release.</span>
+          </div>
+        </div>
+
+        <div className="chat-input-bar-locked">
+          <input
+            type="text"
+            placeholder="Input disabled..."
+            disabled
+            className="chat-input-disabled"
+          />
+        </div>
+      </aside>
     </div>
   );
 }

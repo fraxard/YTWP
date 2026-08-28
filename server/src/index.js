@@ -127,7 +127,7 @@ io.on("connection", (socket) => {
     room.videoState.playing = true;
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[play] room ${socket.roomId}`);
-    socket.to(socket.roomId).emit("play"); // others only, not sender
+    socket.to(socket.roomId).emit("play");
   });
 
   // pause ────────────────────────────────────────────────────────────────────
@@ -137,20 +137,20 @@ io.on("connection", (socket) => {
     room.videoState.playing = false;
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[pause] room ${socket.roomId}`);
-    socket.to(socket.roomId).emit("pause"); // others only, not sender
+    socket.to(socket.roomId).emit("pause");
   });
 
   // seek ─────────────────────────────────────────────────────────────────────
-   socket.on("seek", ({ time }) => {
+  socket.on("seek", ({ time }) => {
     if (!authorize(socket, "seek")) return;
     if (typeof time !== "number" || time < 0) return;
     const room = rooms.getRoom(socket.roomId);
     room.videoState.currentTime = time;
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[seek] room ${socket.roomId} → ${time.toFixed(2)}s`);
-    socket.to(socket.roomId).emit("seek", { time }); // others only, not sender
+    socket.to(socket.roomId).emit("seek", { time });
   });
-  
+
   // change_video ─────────────────────────────────────────────────────────────
   socket.on("change_video", ({ videoId }) => {
     if (!authorize(socket, "change_video")) return;
@@ -165,6 +165,43 @@ io.on("connection", (socket) => {
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[change_video] room ${socket.roomId} → ${videoId}`);
     io.to(socket.roomId).emit("video_changed", { videoId });
+  });
+
+  // assign_role ──────────────────────────────────────────────────────────────
+  socket.on("assign_role", ({ targetId, role }) => {
+    // Only host can assign roles
+    if (!authorize(socket, "assign_role")) return;
+
+    // Only "moderator" and "participant" are assignable (host is not transferable)
+    const ASSIGNABLE_ROLES = ["moderator", "participant"];
+    if (!ASSIGNABLE_ROLES.includes(role)) {
+      socket.emit("error", { message: "Invalid role. Must be 'moderator' or 'participant'." });
+      return;
+    }
+
+    const room = rooms.getRoom(socket.roomId);
+    if (!room) return;
+
+    // Target must be in the same room
+    const target = rooms.getParticipant(socket.roomId, targetId);
+    if (!target) {
+      socket.emit("error", { message: "Participant not found in this room." });
+      return;
+    }
+
+    // Cannot change the host's role
+    if (target.role === "host") {
+      socket.emit("error", { message: "Cannot change the host's role." });
+      return;
+    }
+
+    // No-op if role is already set
+    if (target.role === role) return;
+
+    target.role = role;
+    console.log(`[assign_role] ${socket.id} set ${targetId} → ${role} in room ${socket.roomId}`);
+
+    io.to(socket.roomId).emit("role_updated", { targetId, role });
   });
 
   // disconnect ───────────────────────────────────────────────────────────────
