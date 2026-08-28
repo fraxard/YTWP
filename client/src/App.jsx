@@ -11,13 +11,17 @@ export default function App() {
   const [roomData, setRoomData] = useState(null);
 
   useEffect(() => {
-    // Immediately synchronize with socket's current state on mount
     if (socket.connected) {
       setConnected(true);
     }
 
-    function onConnect() { setConnected(true); }
-    function onDisconnect() { setConnected(false); }
+    function onConnect() {
+      setConnected(true);
+    }
+
+    function onDisconnect() {
+      setConnected(false);
+    }
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -35,8 +39,12 @@ export default function App() {
         setRoomData(null);
       }
     }
+
     socket.on("disconnect", onDisconnect);
-    return () => socket.off("disconnect", onDisconnect);
+
+    return () => {
+      socket.off("disconnect", onDisconnect);
+    };
   }, [screen]);
 
   function handleRoomReady(data) {
@@ -54,12 +62,29 @@ export default function App() {
       {/* Product Header */}
       <header className="global-header">
         <div className="brand-section">
-          <span className="brand-badge">PARTY</span>
-          <span className="brand-title">YTWP : @ayxshhz</span>
+          <span className="brand-badge">
+            PARTY
+          </span>
+
+          <span className="brand-title">
+            YTWP : @ayxshhz
+          </span>
         </div>
+
         <div className="header-status-indicator">
-          <span className={`status-dot ${connected ? "connected" : "disconnected"}`}></span>
-          <span>{connected ? "Connected" : "Offline"}</span>
+          <span
+            className={`status-dot ${
+              connected
+                ? "connected"
+                : "disconnected"
+            }`}
+          ></span>
+
+          <span>
+            {connected
+              ? "Connected"
+              : "Offline"}
+          </span>
         </div>
       </header>
 
@@ -68,23 +93,56 @@ export default function App() {
         {screen === "home" && (
           <div className="lobby-screen">
             <div className="lobby-box">
-              <h2>Watch Together</h2>
-              <p className="lobby-subtitle">Synchronized YouTube sessions in a minimal space.</p>
-              <CreateRoom onRoomReady={handleRoomReady} />
+              <h2>
+                Watch Together
+              </h2>
+
+              <p className="lobby-subtitle">
+                Synchronized YouTube
+                sessions in a minimal
+                space.
+              </p>
+
+              <CreateRoom
+                onRoomReady={
+                  handleRoomReady
+                }
+              />
+
               <hr className="lobby-divider" />
-              <JoinRoom onRoomReady={handleRoomReady} />
+
+              <JoinRoom
+                onRoomReady={
+                  handleRoomReady
+                }
+              />
             </div>
           </div>
         )}
 
-        {screen === "room" && roomData && (
-          <Room
-            roomId={roomData.roomId}
-            initialParticipants={roomData.roomState.participants}
-            initialVideoState={roomData.roomState.videoState}
-            onLeave={handleLeave}
-          />
-        )}
+        {screen === "room" &&
+          roomData && (
+            <Room
+              roomId={
+                roomData.roomId
+              }
+              initialParticipants={
+                roomData.roomState
+                  .participants
+              }
+              initialVideoState={
+                roomData.roomState
+                  .videoState
+              }
+              initialMessages={
+                roomData.roomState
+                  .messages || []
+              }
+              onLeave={
+                handleLeave
+              }
+            />
+          )}
       </main>
     </div>
   );

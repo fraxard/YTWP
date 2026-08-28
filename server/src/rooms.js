@@ -3,17 +3,21 @@ const rooms = {};
 function generateRoomId() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let id = "";
+
   for (let i = 0; i < 6; i++) {
     id += chars[Math.floor(Math.random() * chars.length)];
   }
-  // Regenerate on collision (astronomically unlikely but correct)
+
+  // Regenerate on collision
   return rooms[id] ? generateRoomId() : id;
 }
 
 function createRoom(hostSocket, username) {
   const roomId = generateRoomId();
+
   rooms[roomId] = {
     id: roomId,
+
     participants: {
       [hostSocket.id]: {
         id: hostSocket.id,
@@ -21,13 +25,17 @@ function createRoom(hostSocket, username) {
         role: "host",
       },
     },
+
     videoState: {
       videoId: null,
       playing: false,
       currentTime: 0,
       lastUpdatedAt: Date.now(),
     },
+
+    messages: [],
   };
+
   return rooms[roomId];
 }
 
@@ -37,16 +45,19 @@ function getRoom(roomId) {
 
 function addParticipant(roomId, socketId, username) {
   if (!rooms[roomId]) return null;
+
   rooms[roomId].participants[socketId] = {
     id: socketId,
     username,
     role: "participant",
   };
+
   return rooms[roomId].participants[socketId];
 }
 
 function removeParticipant(roomId, socketId) {
   if (!rooms[roomId]) return;
+
   delete rooms[roomId].participants[socketId];
 
   // Delete room if empty
@@ -60,22 +71,47 @@ function removeParticipant(roomId, socketId) {
   const hasHost = Object.values(rooms[roomId].participants).some(
     (p) => p.role === "host"
   );
+
   if (!hasHost) {
     const nextId = Object.keys(rooms[roomId].participants)[0];
+
     rooms[roomId].participants[nextId].role = "host";
+
     console.log(`[room] ${roomId} promoted ${nextId} to host`);
-    return rooms[roomId].participants[nextId]; // return new host so caller can notify
+
+    return rooms[roomId].participants[nextId];
   }
 }
 
 function getParticipant(roomId, socketId) {
   if (!rooms[roomId]) return null;
+
   return rooms[roomId].participants[socketId] || null;
 }
 
 function getRoomParticipants(roomId) {
   if (!rooms[roomId]) return [];
+
   return Object.values(rooms[roomId].participants);
+}
+
+function addMessage(roomId, message) {
+  if (!rooms[roomId]) return null;
+
+  rooms[roomId].messages.push(message);
+
+  // Keep only the latest 50 messages
+  if (rooms[roomId].messages.length > 50) {
+    rooms[roomId].messages.shift();
+  }
+
+  return message;
+}
+
+function getMessages(roomId) {
+  if (!rooms[roomId]) return [];
+
+  return rooms[roomId].messages;
 }
 
 module.exports = {
@@ -85,4 +121,6 @@ module.exports = {
   removeParticipant,
   getParticipant,
   getRoomParticipants,
+  addMessage,
+  getMessages,
 };

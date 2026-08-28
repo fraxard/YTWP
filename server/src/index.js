@@ -23,7 +23,9 @@ app.get("/api/health", (req, res) => {
 
 if (process.env.NODE_ENV === "production") {
   const clientDist = path.join(__dirname, "../../client/dist");
+
   app.use(express.static(clientDist));
+
   app.get("*", (req, res) => {
     res.sendFile(path.join(clientDist, "index.html"));
   });
@@ -33,199 +35,451 @@ if (process.env.NODE_ENV === "production") {
 
 function handleLeave(socket) {
   const roomId = socket.roomId;
+
   if (!roomId) return;
 
   const participant = rooms.getParticipant(roomId, socket.id);
+
   if (!participant) return;
 
   const newHost = rooms.removeParticipant(roomId, socket.id);
+
   socket.leave(roomId);
 
   if (rooms.getRoom(roomId)) {
     if (newHost) {
-      io.to(roomId).emit("role_updated", { targetId: newHost.id, role: "host" });
+      io.to(roomId).emit("role_updated", {
+        targetId: newHost.id,
+        role: "host",
+      });
     }
-    io.to(roomId).emit("user_left", { participantId: socket.id });
+
+    io.to(roomId).emit("user_left", {
+      participantId: socket.id,
+    });
   }
 
-  console.log(`[leave] ${socket.id} (${participant.username}) left ${roomId}`);
+  console.log(
+    `[leave] ${socket.id} (${participant.username}) left ${roomId}`
+  );
+
   socket.roomId = null;
 }
 
 function authorize(socket, action) {
   const room = rooms.getRoom(socket.roomId);
+
   if (!room) return null;
 
-  const participant = rooms.getParticipant(socket.roomId, socket.id);
+  const participant = rooms.getParticipant(
+    socket.roomId,
+    socket.id
+  );
+
   if (!participant) return null;
 
   if (!can(participant.role, action)) {
-    socket.emit("permission_denied", { action });
-    console.log(`[denied] ${participant.username} (${participant.role}) tried ${action}`);
+    socket.emit("permission_denied", {
+      action,
+    });
+
+    console.log(
+      `[denied] ${participant.username} (${participant.role}) tried ${action}`
+    );
+
     return null;
   }
 
   return participant;
 }
 
-// ─── Socket.IO ───────────────────────────────────────────────────────────────
+// ─── Socket.IO ─────────────────────────────────────────────────────────────
 
 io.on("connection", (socket) => {
-  console.log(`[connect]    ${socket.id}`);
+  console.log(`[connect] ${socket.id}`);
+
+  // ── Create Room ──────────────────────────────────────────────────────────
 
   socket.on("create_room", ({ username }) => {
-    if (!username || typeof username !== "string" || !username.trim()) {
-      socket.emit("error", { message: "Username is required." });
+    if (
+      !username ||
+      typeof username !== "string" ||
+      !username.trim()
+    ) {
+      socket.emit("error", {
+        message: "Username is required.",
+      });
+
       return;
     }
-    const room = rooms.createRoom(socket, username.trim());
+
+    const room = rooms.createRoom(
+      socket,
+      username.trim()
+    );
+
     socket.join(room.id);
     socket.roomId = room.id;
-    console.log(`[create] ${socket.id} (${username}) created room ${room.id}`);
+
+    console.log(
+      `[create] ${socket.id} (${username}) created room ${room.id}`
+    );
+
     socket.emit("room_created", {
       roomId: room.id,
+
       roomState: {
         participants: rooms.getRoomParticipants(room.id),
         videoState: room.videoState,
+        messages: rooms.getMessages(room.id),
       },
     });
   });
 
+  // ── Join Room ────────────────────────────────────────────────────────────
+
   socket.on("join_room", ({ roomId, username }) => {
-    if (!username || typeof username !== "string" || !username.trim()) {
-      socket.emit("error", { message: "Username is required." });
+    if (
+      !username ||
+      typeof username !== "string" ||
+      !username.trim()
+    ) {
+      socket.emit("error", {
+        message: "Username is required.",
+      });
+
       return;
     }
+
     const room = rooms.getRoom(roomId);
+
     if (!room) {
-      socket.emit("error", { message: "Room not found." });
+      socket.emit("error", {
+        message: "Room not found.",
+      });
+
       return;
     }
-    const participant = rooms.addParticipant(roomId, socket.id, username.trim());
+
+    const participant = rooms.addParticipant(
+      roomId,
+      socket.id,
+      username.trim()
+    );
+
     socket.join(roomId);
     socket.roomId = roomId;
-    console.log(`[join] ${socket.id} (${username}) joined room ${roomId}`);
+
+    console.log(
+      `[join] ${socket.id} (${username}) joined room ${roomId}`
+    );
+
     socket.emit("room_state", {
       roomId,
+
       participants: rooms.getRoomParticipants(roomId),
+
       videoState: room.videoState,
+
+      messages: rooms.getMessages(roomId),
     });
-    socket.to(roomId).emit("user_joined", { participant });
+
+    socket.to(roomId).emit("user_joined", {
+      participant,
+    });
   });
 
-  socket.on("leave_room", () => handleLeave(socket));
+  // ── Leave Room ───────────────────────────────────────────────────────────
+
+  socket.on("leave_room", () => {
+    handleLeave(socket);
+  });
+
+  // ── Playback ─────────────────────────────────────────────────────────────
 
   socket.on("play", () => {
     if (!authorize(socket, "play")) return;
+
     const room = rooms.getRoom(socket.roomId);
+
     room.videoState.playing = true;
     room.videoState.lastUpdatedAt = Date.now();
+
     console.log(`[play] room ${socket.roomId}`);
+
     socket.to(socket.roomId).emit("play");
   });
 
   socket.on("pause", () => {
     if (!authorize(socket, "pause")) return;
+
     const room = rooms.getRoom(socket.roomId);
+
     room.videoState.playing = false;
     room.videoState.lastUpdatedAt = Date.now();
+
     console.log(`[pause] room ${socket.roomId}`);
+
     socket.to(socket.roomId).emit("pause");
   });
 
   socket.on("seek", ({ time }) => {
     if (!authorize(socket, "seek")) return;
-    if (typeof time !== "number" || time < 0) return;
+
+    if (
+      typeof time !== "number" ||
+      time < 0
+    ) {
+      return;
+    }
+
     const room = rooms.getRoom(socket.roomId);
+
     room.videoState.currentTime = time;
     room.videoState.lastUpdatedAt = Date.now();
-    console.log(`[seek] room ${socket.roomId} → ${time.toFixed(2)}s`);
-    socket.to(socket.roomId).emit("seek", { time });
+
+    console.log(
+      `[seek] room ${socket.roomId} → ${time.toFixed(2)}s`
+    );
+
+    socket.to(socket.roomId).emit("seek", {
+      time,
+    });
   });
 
   socket.on("change_video", ({ videoId }) => {
     if (!authorize(socket, "change_video")) return;
-    if (!videoId || typeof videoId !== "string") {
-      socket.emit("error", { message: "Invalid video ID." });
+
+    if (
+      !videoId ||
+      typeof videoId !== "string"
+    ) {
+      socket.emit("error", {
+        message: "Invalid video ID.",
+      });
+
       return;
     }
+
     const room = rooms.getRoom(socket.roomId);
+
     room.videoState.videoId = videoId;
     room.videoState.playing = false;
     room.videoState.currentTime = 0;
     room.videoState.lastUpdatedAt = Date.now();
-    console.log(`[change_video] room ${socket.roomId} → ${videoId}`);
-    io.to(socket.roomId).emit("video_changed", { videoId });
+
+    console.log(
+      `[change_video] room ${socket.roomId} → ${videoId}`
+    );
+
+    io.to(socket.roomId).emit(
+      "video_changed",
+      {
+        videoId,
+      }
+    );
   });
+
+  // ── Roles ────────────────────────────────────────────────────────────────
 
   socket.on("assign_role", ({ targetId, role }) => {
     if (!authorize(socket, "assign_role")) return;
 
-    const ASSIGNABLE_ROLES = ["moderator", "participant"];
+    const ASSIGNABLE_ROLES = [
+      "moderator",
+      "participant",
+    ];
+
     if (!ASSIGNABLE_ROLES.includes(role)) {
-      socket.emit("error", { message: "Invalid role." });
+      socket.emit("error", {
+        message: "Invalid role.",
+      });
+
       return;
     }
 
     const room = rooms.getRoom(socket.roomId);
+
     if (!room) return;
 
-    const target = rooms.getParticipant(socket.roomId, targetId);
+    const target = rooms.getParticipant(
+      socket.roomId,
+      targetId
+    );
+
     if (!target) {
-      socket.emit("error", { message: "Participant not found in this room." });
+      socket.emit("error", {
+        message:
+          "Participant not found in this room.",
+      });
+
       return;
     }
 
     if (target.role === "host") {
-      socket.emit("error", { message: "Cannot change the host's role." });
+      socket.emit("error", {
+        message:
+          "Cannot change the host's role.",
+      });
+
       return;
     }
 
     if (target.role === role) return;
 
     target.role = role;
-    console.log(`[assign_role] ${socket.id} set ${targetId} → ${role} in room ${socket.roomId}`);
-    io.to(socket.roomId).emit("role_updated", { targetId, role });
+
+    console.log(
+      `[assign_role] ${socket.id} set ${targetId} → ${role} in room ${socket.roomId}`
+    );
+
+    io.to(socket.roomId).emit(
+      "role_updated",
+      {
+        targetId,
+        role,
+      }
+    );
   });
+
+  // ── Remove Participant ──────────────────────────────────────────────────
 
   socket.on("remove_participant", ({ targetId }) => {
     const roomId = socket.roomId;
-    if (!authorize(socket, "remove_participant")) return;
+
+    if (!authorize(socket, "remove_participant")) {
+      return;
+    }
 
     const room = rooms.getRoom(roomId);
+
     if (!room) return;
 
-    const target = rooms.getParticipant(roomId, targetId);
+    const target = rooms.getParticipant(
+      roomId,
+      targetId
+    );
+
     if (!target) {
-      socket.emit("error", { message: "Participant not found in this room." });
+      socket.emit("error", {
+        message:
+          "Participant not found in this room.",
+      });
+
       return;
     }
 
     if (target.role === "host") {
-      socket.emit("error", { message: "Cannot remove the host." });
+      socket.emit("error", {
+        message:
+          "Cannot remove the host.",
+      });
+
       return;
     }
 
-    console.log(`[remove_participant] ${socket.id} removed ${targetId} from room ${roomId}`);
+    console.log(
+      `[remove_participant] ${socket.id} removed ${targetId} from room ${roomId}`
+    );
 
-    // Notify the removed participant first, then clean up
-    const targetSocket = io.sockets.sockets.get(targetId);
+    const targetSocket =
+      io.sockets.sockets.get(targetId);
+
     if (targetSocket) {
-      targetSocket.emit("participant_removed");
+      targetSocket.emit(
+        "participant_removed"
+      );
+
       targetSocket.leave(roomId);
       targetSocket.roomId = null;
     }
 
-    rooms.removeParticipant(roomId, targetId);
-    io.to(roomId).emit("user_left", { participantId: targetId });
+    rooms.removeParticipant(
+      roomId,
+      targetId
+    );
+
+    io.to(roomId).emit(
+      "user_left",
+      {
+        participantId: targetId,
+      }
+    );
   });
+
+  // ── Chat ─────────────────────────────────────────────────────────────────
+
+  socket.on("chat_message", ({ message }) => {
+    const roomId = socket.roomId;
+
+    if (!roomId) {
+      return;
+    }
+
+    const participant = rooms.getParticipant(
+      roomId,
+      socket.id
+    );
+
+    if (!participant) {
+      return;
+    }
+
+    if (
+      typeof message !== "string"
+    ) {
+      return;
+    }
+
+    const trimmedMessage =
+      message.trim();
+
+    if (!trimmedMessage) {
+      return;
+    }
+
+    if (trimmedMessage.length > 500) {
+      socket.emit("error", {
+        message:
+          "Message is too long. Maximum 500 characters.",
+      });
+
+      return;
+    }
+
+    const chatMessage = {
+      id: `${socket.id}-${Date.now()}`,
+      userId: socket.id,
+      username: participant.username,
+      role: participant.role,
+      message: trimmedMessage,
+      timestamp: Date.now(),
+    };
+
+    rooms.addMessage(
+      roomId,
+      chatMessage
+    );
+
+    io.to(roomId).emit(
+      "chat_message",
+      chatMessage
+    );
+  });
+
+  // ── Disconnect ───────────────────────────────────────────────────────────
 
   socket.on("disconnect", () => {
     handleLeave(socket);
-    console.log(`[disconnect] ${socket.id}`);
+
+    console.log(
+      `[disconnect] ${socket.id}`
+    );
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(
+    `Server running on port ${PORT}`
+  );
 });
