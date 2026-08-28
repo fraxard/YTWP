@@ -47,24 +47,21 @@ function ParticipantRow({ participant, isMe }) {
   );
 }
 
-export default function Room({ roomId, initialParticipants, onLeave }) {
+export default function Room({ roomId, initialParticipants, initialVideoState, onLeave }) {
   const [participants, setParticipants] = useState(initialParticipants);
-  const [videoId, setVideoId] = useState(DEFAULT_VIDEO_ID);
+  const [videoId, setVideoId] = useState(
+    initialVideoState?.videoId || DEFAULT_VIDEO_ID
+  );
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState("");
 
-  // Shared refs passed into VideoPlayer
-  const playerRef = useRef(null);    // YT.Player instance
-  const suppressRef = useRef(false); // true = next onStateChange is from us, not the user
+  const playerRef = useRef(null);
+  const suppressRef = useRef(false);
 
   const myParticipant = participants.find((p) => p.id === socket.id);
-  const isHost = myParticipant?.role === "host";
-  const canControl = isHost; // moderator added in Step 8
-
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  const canControl = myParticipant?.role === "host";
 
   function safeCall(fn) {
-    // Guard against calling player methods before the IFrame is ready
     if (playerRef.current && typeof playerRef.current.playVideo === "function") {
       fn();
     }
@@ -90,21 +87,18 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
     function onVideoChanged({ videoId }) {
       setVideoId(videoId);
     }
-
-    // Server told everyone to play
     function onPlay() {
-      suppressRef.current = true; // next YT state-change event is ours — ignore it
+      // suppressRef prevents the resulting onStateChange from emitting back
+      suppressRef.current = true;
       safeCall(() => playerRef.current.playVideo());
     }
-
-    // Server told everyone to pause
     function onPause() {
       suppressRef.current = true;
       safeCall(() => playerRef.current.pauseVideo());
     }
-
-    // Server told everyone to seek
     function onSeek({ time }) {
+      // seekTo does not trigger onStateChange, so no suppress needed —
+      // but we set it anyway in case the player fires a buffering event
       suppressRef.current = true;
       safeCall(() => playerRef.current.seekTo(time, true));
     }
@@ -128,23 +122,23 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
     };
   }, []);
 
-  // ── YouTube state-change → socket emit ───────────────────────────────────
-  // VideoPlayer dispatches a custom DOM event for genuine user actions.
-  // We listen here and forward to the server — but only if canControl.
+  // ── YouTube user actions → server ─────────────────────────────────────────
 
   useEffect(() => {
     function onYtStateChange(e) {
-      if (!canControl) return; // participant: do nothing, server will reject anyway
+      if (!canControl) return;
 
       const YT_PLAYING = 1;
       const YT_PAUSED  = 2;
 
       if (e.detail.state === YT_PLAYING) {
+        // Emit current time with play so server state stays accurate
+        const time = playerRef.current?.getCurrentTime?.() ?? 0;
+        socket.emit("seek", { time });
         socket.emit("play");
       } else if (e.detail.state === YT_PAUSED) {
-        // getCurrentTime() is safe here — player is definitely ready if it fired
         const time = playerRef.current?.getCurrentTime?.() ?? 0;
-        socket.emit("seek", { time }); // sync position on pause too
+        socket.emit("seek", { time });
         socket.emit("pause");
       }
     }
@@ -152,12 +146,6 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
     window.addEventListener("yt-state-change", onYtStateChange);
     return () => window.removeEventListener("yt-state-change", onYtStateChange);
   }, [canControl]);
-
-  // Seek: emitted when the host scrubs the progress bar.
-  // The YT API doesn't fire a distinct "seeked" event — we detect it by
-  // watching for PLAYING after a user-initiated seek. This is the simplest
-  // reliable approach without polling.
-  // For an explicit seek bar we would debounce getCurrentTime() — added in a later step.
 
   // ── User actions ──────────────────────────────────────────────────────────
 
@@ -179,12 +167,10 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
 
   return (
     <div style={{ fontFamily: "sans-serif", maxWidth: "800px" }}>
-
-      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "4px" }}>
         <h2 style={{ margin: 0 }}>Room</h2>
         <code style={{
-          background: "#27282a",
+          background: "#2f3031",
           padding: "4px 10px",
           borderRadius: "6px",
           fontSize: "1.1rem",
@@ -198,7 +184,6 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
         Your role: <strong>{myParticipant?.role ?? "—"}</strong>
       </p>
 
-      {/* Player */}
       <VideoPlayer
         videoId={videoId}
         controls={canControl}
@@ -206,7 +191,6 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
         suppressRef={suppressRef}
       />
 
-      {/* URL input — host only */}
       {canControl && (
         <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
           <input
@@ -236,7 +220,6 @@ export default function Room({ roomId, initialParticipants, onLeave }) {
         <p style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "6px" }}>{urlError}</p>
       )}
 
-      {/* Participants */}
       <h3 style={{ marginTop: "24px", marginBottom: "8px" }}>
         Participants <span style={{ color: "#888", fontWeight: 400 }}>({participants.length})</span>
       </h3>

@@ -27,9 +27,6 @@ function loadYouTubeScript() {
 const PLAYER_DIV_ID = "yt-player";
 
 export default function VideoPlayer({ videoId, controls = true, playerRef, suppressRef }) {
-  // playerRef and suppressRef are passed in from Room.jsx so the parent
-  // can call player methods and set the suppress flag directly.
-
   useEffect(() => {
     loadYouTubeScript();
 
@@ -50,31 +47,14 @@ export default function VideoPlayer({ videoId, controls = true, playerRef, suppr
         },
         events: {
           onReady: () => console.log("[YT] Player ready"),
-
           onStateChange: (event) => {
-            // ── Infinite loop prevention ──────────────────────────────────
-            // When we receive a server event (play/pause/seek) we call
-            // player.playVideo() / player.pauseVideo() programmatically.
-            // That call fires onStateChange just like a user click would.
-            // Without this flag we would emit back to the server, which
-            // would broadcast again, which would call playVideo() again...
-            //
-            // Solution: before every programmatic player call, set
-            // suppressRef.current = true. Here we check it and if true,
-            // we clear it and return — swallowing the event silently.
             if (suppressRef.current) {
               suppressRef.current = false;
               return;
             }
-            // ─────────────────────────────────────────────────────────────
-
-            // This was a genuine user action — let Room.jsx handle it
-            // via the onStateChange prop would add complexity, so instead
-            // we dispatch a custom DOM event that Room.jsx listens for.
             const detail = { state: event.data };
             window.dispatchEvent(new CustomEvent("yt-state-change", { detail }));
           },
-
           onError: (e) => console.error("[YT] error", e.data),
         },
       });
@@ -95,8 +75,25 @@ export default function VideoPlayer({ videoId, controls = true, playerRef, suppr
   }, [videoId]);
 
   return (
-    <div style={{ width: "100%", aspectRatio: "16/9", background: "#000" }}>
+    <div style={{ width: "100%", aspectRatio: "16/9", background: "#000", position: "relative" }}>
       <div id={PLAYER_DIV_ID} style={{ width: "100%", height: "100%" }} />
+
+      {/* Block all mouse interaction for participants.
+          controls=false means this is a participant — overlay a transparent
+          div on top of the iframe so clicks never reach the YouTube player.
+          The video still plays/pauses from server events because those call
+          the JS API directly, not through mouse events. */}
+      {!controls && (
+        <div style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 10,
+          cursor: "not-allowed",
+        }} />
+      )}
     </div>
   );
 }

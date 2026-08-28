@@ -127,7 +127,7 @@ io.on("connection", (socket) => {
     room.videoState.playing = true;
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[play] room ${socket.roomId}`);
-    io.to(socket.roomId).emit("play");
+    socket.to(socket.roomId).emit("play"); // others only, not sender
   });
 
   // pause ────────────────────────────────────────────────────────────────────
@@ -137,20 +137,20 @@ io.on("connection", (socket) => {
     room.videoState.playing = false;
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[pause] room ${socket.roomId}`);
-    io.to(socket.roomId).emit("pause");
+    socket.to(socket.roomId).emit("pause"); // others only, not sender
   });
 
   // seek ─────────────────────────────────────────────────────────────────────
-  socket.on("seek", ({ time }) => {
+   socket.on("seek", ({ time }) => {
     if (!authorize(socket, "seek")) return;
     if (typeof time !== "number" || time < 0) return;
     const room = rooms.getRoom(socket.roomId);
     room.videoState.currentTime = time;
     room.videoState.lastUpdatedAt = Date.now();
     console.log(`[seek] room ${socket.roomId} → ${time.toFixed(2)}s`);
-    io.to(socket.roomId).emit("seek", { time });
+    socket.to(socket.roomId).emit("seek", { time }); // others only, not sender
   });
-
+  
   // change_video ─────────────────────────────────────────────────────────────
   socket.on("change_video", ({ videoId }) => {
     if (!authorize(socket, "change_video")) return;

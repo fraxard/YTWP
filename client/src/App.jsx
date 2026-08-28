@@ -62,7 +62,7 @@ export default function App() {
         <Room
           roomId={roomData.roomId}
           initialParticipants={roomData.roomState.participants}
-          username={roomData.username}
+          initialVideoState={roomData.roomState.videoState}
           onLeave={handleLeave}
         />
       )}
