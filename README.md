@@ -6,9 +6,11 @@ A real-time synchronized YouTube watching application built with React, Node.js,
 
 ## Live Demo
 
-**Live URL:** Coming soon
+**Live URL:** https://ytwp-client.onrender.com/
 
-The application deploys as a single full-stack Node.js service with the React production build served directly by Express.
+**Backend API / Socket.IO:** https://ytwp.onrender.com/
+
+The application is deployed as two separate Render services: a static React/Vite frontend and a Node.js/Express/Socket.IO backend. The frontend connects to the backend through `VITE_SERVER_URL`, while the backend restricts access to the configured `CLIENT_ORIGIN`.
 
 ---
 
@@ -535,7 +537,7 @@ Handles all Socket.IO events:
 - Reactions: `emoji_reaction`
 - Disconnect with 8-second grace period before eviction
 
-Also serves the React production build and the `/api/health` endpoint.
+Also exposes the `/api/health` endpoint. In production, the React frontend is deployed separately as a Render Static Site.
 
 ### `rooms.js`
 
@@ -574,40 +576,68 @@ Keeping this separate means adding or removing a permission is a one-line change
 
 ## Production Architecture
 
-A single Node.js process serves both the API and the built React frontend.
+The application is deployed as **two separate Render services**:
 
-```
-Internet
-    │
-    ▼
-┌─────────────────────┐
-│        Render       │
-│  Node.js + Express  │
-│  Socket.IO          │
-│  client/dist (SPA)  │
-└──────────┬──────────┘
-           │
-    ┌──────┴──────┐
-    ▼             ▼
- GET /        /socket.io/*
- (React SPA)  (WebSocket)
+```text
+                         Internet
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+   ┌────────────────────┐      ┌─────────────────────┐
+   │   YTWP-client      │      │        YTWP         │
+   │   Render Static     │      │   Render Web Service │
+   │   React + Vite      │      │ Node + Express       │
+   │   client/dist       │      │ Socket.IO            │
+   └─────────┬──────────┘      │ /api/health          │
+             │                 └──────────┬──────────┘
+             │                            │
+             └──── Socket.IO / HTTP ──────┘
 ```
 
-Express serves `client/dist` as static files. All `GET` routes fall back to `index.html` so React Router (if added later) works correctly. The same HTTP server upgrades WebSocket connections for Socket.IO.
+### Frontend
+
+**Production URL:** `https://ytwp-client.onrender.com/`
+
+Render builds the `client/` directory with Vite and publishes its `dist/` output as a static site.
+
+### Backend
+
+**Production URL:** `https://ytwp.onrender.com/`
+
+The backend runs Node.js/Express/Socket.IO and exposes the health endpoint at `/api/health`. It does **not** serve the React build in production.
+
+### Production connection
+
+The frontend uses:
+
+```text
+VITE_SERVER_URL=https://ytwp.onrender.com
+```
+
+The backend uses:
+
+```text
+CLIENT_ORIGIN=https://ytwp-client.onrender.com
+```
+
+This keeps the frontend and real-time backend independently deployable while allowing Socket.IO connections from the production frontend.
 
 ### Production Build
 
 ```bash
-# Build the frontend
-cd client && npm run build
+# Frontend
+cd client
+npm install
+npm run build
 
-# Run the server in production mode
-# macOS / Linux
-NODE_ENV=production node src/index.js
-
-# Windows PowerShell
-$env:NODE_ENV="production"; node src/index.js
+# Backend
+cd server
+npm install
+npm start
 ```
+
+Render uses the equivalent commands during deployment. The backend listens on Render's assigned `PORT`.
 
 ---
 
@@ -622,7 +652,7 @@ $env:NODE_ENV="production"; node src/index.js
 ### Setup
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/fraxard/YTWP.git
 cd yt-wp
 ```
 
@@ -664,11 +694,20 @@ The core functionality requires multiple browser sessions. Recommended setup:
 
 ## Environment Variables
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `PORT` | `3001` | Server port (Render sets this automatically) |
-| `NODE_ENV` | — | Set to `production` to serve the React build |
-| `CLIENT_ORIGIN` | `http://localhost:5173` | CORS origin for Socket.IO |
+| Variable | Default | Used by | Purpose |
+|----------|---------|---------|---------|
+| `PORT` | `3001` | Backend | Server port (Render sets this automatically) |
+| `CLIENT_ORIGIN` | `http://localhost:5173` | Backend | Allowed frontend origin for CORS |
+| `VITE_SERVER_URL` | — | Frontend | Backend URL used by the Socket.IO client |
+
+### Production values
+
+```text
+VITE_SERVER_URL=https://ytwp.onrender.com
+CLIENT_ORIGIN=https://ytwp-client.onrender.com
+```
+
+`VITE_SERVER_URL` is a Vite build-time variable, so it must be configured in the frontend deployment environment before building.
 
 ---
 
@@ -681,7 +720,7 @@ The core functionality requires multiple browser sessions. Recommended setup:
 | Real-time | Socket.IO 4 |
 | Video | YouTube IFrame Player API |
 | Storage | In-memory (JavaScript object) |
-| Deployment | Render (Node.js + static) |
+| Deployment | Render (Static Site + Node.js Web Service) |
 
 ---
 
@@ -746,6 +785,7 @@ Socket.IO provides room-based broadcasting, automatic reconnection, and fallback
 | Single server only | Horizontal scaling requires a Redis Socket.IO adapter |
 | No join-time position estimation | New joiners start at the last recorded position, not the live estimated position |
 | No explicit host transfer UI | Host must leave to trigger automatic transfer |
+| Join-time autoplay edge case | If a video is already playing when a new participant joins, the new participant may not autoplay until the host pauses and resumes playback |
 
 ---
 
