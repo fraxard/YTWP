@@ -1,7 +1,24 @@
 import { io } from "socket.io-client";
 
-// In dev, Vite proxies /socket.io to the backend.
-// In production, frontend and backend share the same origin.
-const socket = io();
+// Generate a stable clientId for this browser.
+// This persists across page refreshes so the server can identify returning clients.
+function getClientId() {
+  const KEY = "ytwp-client-id";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
+const socket = io({
+  // Send clientId as a handshake query so the server has it from the very first connection.
+  query: { clientId: getClientId() },
+  // Reconnect aggressively on transient failures (network blip, etc.)
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
 
 export default socket;
+export { getClientId };
