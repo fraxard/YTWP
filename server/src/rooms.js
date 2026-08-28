@@ -19,6 +19,7 @@ function createRoom(hostSocket, username) {
 
   rooms[roomId] = {
     id: roomId,
+    createdAt: Date.now(),   // used by the client stopwatch
     participants: {
       [hostSocket.id]: {
         id: hostSocket.id,

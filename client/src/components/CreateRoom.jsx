@@ -7,10 +7,7 @@ export default function CreateRoom({ onRoomReady }) {
 
   function handleCreate() {
     const name = username.trim();
-    if (!name) {
-      setError("Enter a username.");
-      return;
-    }
+    if (!name) { setError("Enter a username."); return; }
 
     socket.once("room_created", ({ roomId, roomState }) => {
       onRoomReady({ roomId, roomState, username: name });

@@ -5,6 +5,37 @@ import JoinRoom from "./components/JoinRoom";
 import Room from "./components/Room";
 import "./App.css";
 
+// ── Stopwatch ──────────────────────────────────────────────────────────────
+// Displays HH:MM:SS (or MM:SS when under an hour) since the room was created.
+// `startTime` is a Unix timestamp in ms from the server — so it's accurate
+// even for users who joined mid-session or reconnected after a refresh.
+
+function Stopwatch({ startTime }) {
+  const [elapsed, setElapsed] = useState(Date.now() - startTime);
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Date.now() - startTime), 1000);
+    return () => clearInterval(id);
+  }, [startTime]);
+
+  const totalSeconds = Math.floor(elapsed / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const display = h > 0
+    ? `${pad(h)}:${pad(m)}:${pad(s)}`
+    : `${pad(m)}:${pad(s)}`;
+
+  return (
+    <div className="room-stopwatch" title="Time since room started">
+      <span className="stopwatch-icon" aria-hidden="true">⏱</span>
+      <span className="stopwatch-time">{display}</span>
+    </div>
+  );
+}
+
 // ── Session helpers ────────────────────────────────────────────────────────
 // We use sessionStorage so the saved session is tab-scoped and is automatically
 // cleared when the user closes the tab entirely.
@@ -42,6 +73,7 @@ export default function App() {
   // We track whether we are currently attempting an auto-reconnect so we
   // can show a sensible loading state and avoid double-attempts.
   const [reconnecting, setReconnecting] = useState(false);
+  const [roomCreatedAt, setRoomCreatedAt] = useState(null);
 
   // Keep a ref to the current screen so socket event callbacks always
   // see the latest value without needing to be re-registered.
@@ -75,13 +107,14 @@ export default function App() {
       });
     }
 
-    function onRoomState({ roomId, participants, videoState, messages }) {
+    function onRoomState({ roomId, participants, videoState, messages, createdAt }) {
       // Server confirmed the reconnect. Restore the room view.
       setRoomData({
         roomId,
         roomState: { participants, videoState, messages: messages || [] },
         username: saved.username,
       });
+      if (createdAt) setRoomCreatedAt(createdAt);
       setScreen("room");
       setReconnecting(false);
     }
@@ -137,6 +170,7 @@ export default function App() {
 
   function handleRoomReady(data) {
     saveSession(data.roomId, data.username);
+    if (data.roomState?.createdAt) setRoomCreatedAt(data.roomState.createdAt);
     setRoomData(data);
     setScreen("room");
   }
@@ -146,6 +180,7 @@ export default function App() {
   function handleLeave() {
     clearSession(); // User intentionally left → clear so refresh goes to lobby.
     setRoomData(null);
+    setRoomCreatedAt(null);
     setScreen("home");
   }
 
@@ -160,6 +195,8 @@ export default function App() {
         </div>
 
         <div className="header-actions">
+          {roomCreatedAt && <Stopwatch startTime={roomCreatedAt} />}
+
           <button
             className="theme-toggle"
             type="button"

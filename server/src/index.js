@@ -148,6 +148,7 @@ io.on("connection", (socket) => {
         participants: rooms.getRoomParticipants(room.id),
         videoState: room.videoState,
         messages: rooms.getMessages(room.id),
+        createdAt: room.createdAt,
       },
     });
   });
@@ -183,6 +184,7 @@ io.on("connection", (socket) => {
       participants: rooms.getRoomParticipants(roomId),
       videoState: room.videoState,
       messages: rooms.getMessages(roomId),
+      createdAt: room.createdAt,
     });
 
     socket.to(roomId).emit("user_joined", { participant });
@@ -234,6 +236,7 @@ io.on("connection", (socket) => {
         participants: rooms.getRoomParticipants(roomId),
         videoState: room.videoState,
         messages: rooms.getMessages(roomId),
+        createdAt: room.createdAt,
       });
 
       // Tell others the socket.id changed (so their participant list stays
@@ -267,6 +270,7 @@ io.on("connection", (socket) => {
         participants: rooms.getRoomParticipants(roomId),
         videoState: room.videoState,
         messages: rooms.getMessages(roomId),
+        createdAt: room.createdAt,
       });
 
       socket.to(roomId).emit("user_joined", { participant });

@@ -10,17 +10,15 @@ export default function JoinRoom({ onRoomReady }) {
     const name = username.trim();
     const id = roomId.trim().toUpperCase();
 
-    if (!name) {
-      setError("Enter a username.");
-      return;
-    }
-    if (!id) {
-      setError("Enter a room code.");
-      return;
-    }
+    if (!name) { setError("Enter a username."); return; }
+    if (!id)   { setError("Enter a room code."); return; }
 
-    socket.once("room_state", ({ roomId, participants, videoState }) => {
-      onRoomReady({ roomId, roomState: { participants, videoState }, username: name });
+    socket.once("room_state", ({ roomId, participants, videoState, messages, createdAt }) => {
+      onRoomReady({
+        roomId,
+        roomState: { participants, videoState, messages: messages || [], createdAt },
+        username: name,
+      });
     });
 
     socket.once("error", ({ message }) => {

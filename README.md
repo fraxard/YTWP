@@ -1,8 +1,6 @@
 # YouTube Watch Party
 
-A real-time YouTube watch party application that allows multiple users to join the same room and watch videos together with synchronized playback.
-
-The application uses React on the frontend, Node.js + Express on the backend, and Socket.IO for real-time communication between users.
+A real-time synchronized YouTube watching application built with React, Node.js, Express, and Socket.IO. Multiple users can join the same room, watch YouTube videos together with frame-accurate playback sync, chat in real time, react with emojis, and manage room roles — all without any accounts or databases.
 
 ---
 
@@ -10,1586 +8,835 @@ The application uses React on the frontend, Node.js + Express on the backend, an
 
 **Live URL:** Coming soon
 
-The application will be deployed as a full-stack service with the React production build served by the Express server.
+The application deploys as a single full-stack Node.js service with the React production build served directly by Express.
 
 ---
 
-# Overview
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Role-Based Access Control](#role-based-access-control)
+- [Permission Enforcement](#permission-enforcement)
+- [Video Synchronization](#video-synchronization)
+- [Chat](#chat)
+- [Emoji Reactions](#emoji-reactions)
+- [Browser Refresh Recovery](#browser-refresh-recovery)
+- [Room Stopwatch](#room-stopwatch)
+- [Preventing Playback Event Loops](#preventing-playback-event-loops)
+- [Host Transfer](#host-transfer)
+- [Room State](#room-state)
+- [WebSocket Event Architecture](#websocket-event-architecture)
+- [Frontend Architecture](#frontend-architecture)
+- [Backend Architecture](#backend-architecture)
+- [Production Architecture](#production-architecture)
+- [Local Development](#local-development)
+- [Environment Variables](#environment-variables)
+- [Technology Stack](#technology-stack)
+- [Security Considerations](#security-considerations)
+- [Design Decisions](#design-decisions)
+- [Known Limitations](#known-limitations)
+- [Future Improvements](#future-improvements)
+- [Project Structure](#project-structure)
+- [Status](#status)
+- [License](#license)
+
+---
+
+## Overview
 
 YouTube Watch Party is a room-based synchronized video watching application.
 
-A user can create a room and automatically becomes the Host. Other users can join the room using a room code and are added as Participants by default.
+A user creates a room and automatically becomes the **Host**. Other users join using a 6-character room code and are assigned the **Participant** role by default.
 
-The Host can:
-
-- Control video playback
-- Pause and play the video
-- Seek to a different position
-- Change the current YouTube video
-- Promote participants to Moderators
+**Host** can:
+- Control playback (play, pause, seek)
+- Change the YouTube video
+- Promote Participants to Moderators
 - Demote Moderators back to Participants
-- Remove participants
-- Transfer the Host role when the Host leaves
+- Remove Participants and Moderators
+- Automatically transfer Host role on disconnect
 
-Moderators can control playback but do not have Host-level room management permissions.
+**Moderators** can control playback but have no room management permissions.
 
-Participants can watch the synchronized video and use the room chat but cannot control playback.
+**Participants** can watch the synchronized video, send chat messages, and react with emojis.
 
-The main communication between clients happens through Socket.IO events. Room state is currently stored in memory on the Node.js server.
-
----
-
-# Features
-
-## Room Management
-
-### Create Room
-
-A user can create a new watch party room by entering a username.
-
-The server:
-
-1. Generates a unique 6-character room ID.
-2. Creates the room in memory.
-3. Adds the creator as the Host.
-4. Adds the socket to the Socket.IO room.
-5. Sends the initial room state back to the creator.
-
-Example:
-
-    User
-      ↓
-    Create Room
-      ↓
-    Server generates room ID
-      ↓
-    ABC123
-      ↓
-    User becomes Host
+All communication happens over Socket.IO. Room state lives in server memory — no database required.
 
 ---
 
-## Join Room
+## Features
 
-Users can join an existing room using the room ID.
+### Room Management
 
-Joiners are automatically assigned the `participant` role.
+#### Create Room
 
-The server sends the joining user:
+A user enters a username and creates a room. The server:
 
-- Room ID
-- Participant list
-- Current video state
-- Recent chat messages
+1. Generates a unique 6-character room ID
+2. Creates the room in memory with a `createdAt` timestamp
+3. Assigns the creator as Host
+4. Joins the socket to the Socket.IO room
+5. Returns the full room state to the creator
 
-The other participants receive a `user_joined` event.
+#### Join Room
+
+Users paste a room code to join. The server validates the room exists, adds the user as a Participant, and returns the current room state including participant list, video state, and recent chat messages.
 
 ---
 
-# Role-Based Access Control
+## Role-Based Access Control
 
-The application uses three main roles.
+| Role | Playback | Change Video | Manage Roles | Remove Users |
+|------|----------|--------------|--------------|--------------|
+| Host | ✓ | ✓ | ✓ | ✓ |
+| Moderator | ✓ | ✓ | ✗ | ✗ |
+| Participant | ✗ | ✗ | ✗ | ✗ |
 
-| Role | Playback | Role Management | Remove Users |
-|------|----------|-----------------|--------------|
-| Host | Yes | Yes | Yes |
-| Moderator | Yes | No | No |
-| Participant | No | No | No |
+### Host
 
-## Host
+Automatically assigned at room creation. Host permissions:
 
-The Host is automatically assigned when a room is created.
-
-Host permissions include:
-
-- Play
-- Pause
-- Seek
+- Play / Pause / Seek
 - Change video
-- Assign roles
-- Remove participants
-- Host transfer when leaving
+- Promote Participant → Moderator
+- Demote Moderator → Participant
+- Remove Participant or Moderator
+- Host role transfers automatically on disconnect (after grace period)
 
-## Moderator
+### Moderator
 
-Moderators are assigned by the Host.
+Assigned by the Host. Moderators can control playback and change the video but cannot modify other participants' roles or remove users.
 
-They can:
+### Participant
 
-- Play
-- Pause
-- Seek
-- Change video
-
-They cannot:
-
-- Promote other users
-- Demote users
-- Remove users
-- Change the Host
-
-## Participant
-
-Participants are the default role for users joining a room.
-
-They can:
-
-- Watch the synchronized video
-- View participants
-- Send chat messages
-
-They cannot:
-
-- Play
-- Pause
-- Seek
-- Change the video
-- Assign roles
-- Remove participants
+The default role. Participants can watch the synced video, read and send chat messages, and send emoji reactions. They cannot control playback.
 
 ---
 
-# Permission Enforcement
+## Permission Enforcement
 
-Permissions are enforced on the backend.
+All permission checks happen on the **server**. The frontend hides controls for clarity, but the server is the actual authority.
 
-The frontend hides or disables controls for users without permission, but this is not treated as the security mechanism.
+Every restricted Socket.IO event goes through:
 
-The server checks the user's role before processing restricted Socket.IO events.
-
-The general flow is:
-
-    Client sends event
-           ↓
-    Server identifies socket
-           ↓
-    Find room
-           ↓
-    Find participant
-           ↓
-    Check participant role
-           ↓
-    Check permission
-           ↓
-    Process event
-           ↓
-    Broadcast result
-
-For example, if a Participant attempts to change the video:
-
-    Participant
-         ↓
-    change_video
-         ↓
-    Server
-         ↓
-    Role = participant
-         ↓
-    Permission denied
-
-The server responds with a `permission_denied` event instead of processing the action.
-
-This prevents users from bypassing frontend restrictions by manually emitting Socket.IO events.
-
----
-
-# Video Synchronization
-
-The application uses the YouTube IFrame Player API to embed and control YouTube videos.
-
-The current room video state contains:
-
-    {
-      videoId,
-      playing,
-      currentTime,
-      lastUpdatedAt
-    }
-
-The server keeps this state for each room.
-
----
-
-## Play Synchronization
-
-When a Host or Moderator plays the video:
-
-    Host / Moderator
-           ↓
-    socket.emit("play")
-           ↓
-    Server validates permission
-           ↓
-    Room video state updated
-           ↓
-    Server broadcasts "play"
-           ↓
-    Other clients play the video
-
----
-
-## Pause Synchronization
-
-The same pattern is used for pausing:
-
-    Host / Moderator
-           ↓
-    pause
-           ↓
-    Server
-           ↓
-    Update room state
-           ↓
-    Broadcast pause
-           ↓
-    Other clients pause
-
----
-
-## Seek Synchronization
-
-When a Host or Moderator seeks, a payload similar to the following is sent to the server:
-
-    {
-      time: 125.4
-    }
-
-The server updates the room's current playback position and broadcasts the new position to other clients.
-
-The receiving clients call the YouTube player's `seekTo()` method.
-
----
-
-## Change Video Synchronization
-
-Hosts and Moderators can paste a YouTube URL.
-
-The client extracts the YouTube video ID and sends:
-
-    {
-      videoId
-    }
-
-to the server.
-
-The server updates the room state and broadcasts:
-
-    video_changed
-
-to all clients.
-
-The clients then load the new video.
-
-Changing the video also resets:
-
-    playing = false
-    currentTime = 0
-
-so that all users start the new video from the beginning.
-
----
-
-# YouTube Integration
-
-The application uses the YouTube IFrame Player API.
-
-The frontend dynamically loads the YouTube IFrame API and creates a YouTube player instance.
-
-The application accepts common YouTube URL formats including:
-
-    https://www.youtube.com/watch?v=VIDEO_ID
-    https://youtu.be/VIDEO_ID
-    https://www.youtube.com/embed/VIDEO_ID
-
-The video ID is extracted before being sent to the backend.
-
-The actual player is isolated inside:
-
-    client/src/components/VideoPlayer.jsx
-
-This keeps YouTube-specific functionality separate from the room and participant logic.
-
----
-
-# Preventing Playback Event Loops
-
-One of the issues encountered during development was a playback event loop.
-
-The problem occurred when a server-originated playback command caused the YouTube player to emit another state-change event.
-
-For example:
-
-    Server says PLAY
-          ↓
-    YouTube plays
-          ↓
-    YouTube emits PLAYING
-          ↓
-    Client interprets it as a new user action
-          ↓
-    Client emits PLAY again
-          ↓
-    Server broadcasts PLAY
-          ↓
-    ...
-
-This could result in repeated play/pause behavior, particularly when roles were being changed.
-
-To prevent this, the client keeps track of whether a YouTube state change was caused by a remote/server event.
-
-A suppression reference is used so that server-originated playback changes are not immediately interpreted as new user actions.
-
-Conceptually:
-
-    Remote play received
-           ↓
-    Mark event as suppressed
-           ↓
-    Call YouTube playVideo()
-           ↓
-    YouTube fires state change
-           ↓
-    Client recognizes suppressed event
-           ↓
-    Does NOT emit another play event
-
-This keeps local user actions and remote synchronization events on separate paths.
-
----
-
-# Room State
-
-Rooms are currently stored in memory on the Node.js server.
-
-A simplified room looks like:
-
-    {
-      id: "ABC123",
-
-      participants: {
-        socketId: {
-          id: socketId,
-          username: "Ayush",
-          role: "host"
-        }
-      },
-
-      videoState: {
-        videoId: "dQw4w9WgXcQ",
-        playing: false,
-        currentTime: 0,
-        lastUpdatedAt: Date.now()
-      },
-
-      messages: []
-    }
-
-The room store is implemented in:
-
-    server/src/rooms.js
-
-The module contains helper functions for:
-
-- Creating rooms
-- Finding rooms
-- Adding participants
-- Removing participants
-- Finding participants
-- Getting participant lists
-- Managing chat messages
-
----
-
-# Why There Is No Database
-
-A database is intentionally not used in the current MVP.
-
-The application is primarily a real-time synchronization project, so the room state can be maintained in memory on the Node.js server.
-
-The current architecture is therefore:
-
-    Browser
+```
+Client sends event
        ↓
-    React
+Server identifies socket
        ↓
-    Socket.IO
+Find room → Find participant → Check role
        ↓
-    Node.js + Express
+Permission granted → Process → Broadcast
+Permission denied  → Emit permission_denied
+```
+
+A Participant manually emitting `change_video` via the browser console is rejected server-side with a `permission_denied` event. The frontend never enforces security.
+
+---
+
+## Video Synchronization
+
+The application uses the YouTube IFrame Player API. Room video state stored on the server:
+
+```json
+{
+  "videoId": "dQw4w9WgXcQ",
+  "playing": false,
+  "currentTime": 0,
+  "lastUpdatedAt": 1693000000000
+}
+```
+
+### Play
+
+```
+Host / Moderator → socket.emit("play")
        ↓
-    In-memory room state
+Server validates permission
+       ↓
+videoState.playing = true
+       ↓
+Broadcast "play" to room
+       ↓
+All clients call player.playVideo()
+```
 
-This keeps the project small and makes the real-time architecture easier to understand and demonstrate.
+### Pause
 
-## Trade-off
+Same pattern. `videoState.playing = false`, broadcast `"pause"`.
 
-The main limitation is that room state is lost when the Node.js server process restarts.
+### Seek
 
-For example:
+```
+Host / Moderator → socket.emit("seek", { time: 125.4 })
+       ↓
+Server validates permission
+       ↓
+videoState.currentTime = 125.4
+       ↓
+Broadcast "seek" to room
+       ↓
+All clients call player.seekTo(125.4, true)
+```
 
-    Server running
-          ↓
-    Room ABC123 exists
-          ↓
-    Server restart
-          ↓
-    Memory cleared
-          ↓
-    Room ABC123 no longer exists
+### Change Video
 
-Persistent rooms were not required for the MVP.
+The client extracts the YouTube video ID from any pasted URL format and sends `{ videoId }`. The server resets `playing` to `false` and `currentTime` to `0`, then broadcasts `video_changed` so all clients load the new video from the beginning.
 
-If persistence were required in a future version, room metadata and chat history could be moved to PostgreSQL, MongoDB, SQLite, or another persistent store.
+Accepted URL formats:
 
----
-
-# Chat
-
-Basic room chat has been added as an additional feature.
-
-The chat is implemented using Socket.IO.
-
-Users can:
-
-- Send messages
-- Receive messages in real time
-- See usernames
-- See sender roles
-- See timestamps
-- Send messages using Enter
-- View recent chat history
-
-Messages are limited to the latest 50 messages per room.
-
-Individual messages are limited to 500 characters.
-
-Empty messages are ignored.
+```
+https://www.youtube.com/watch?v=VIDEO_ID
+https://youtu.be/VIDEO_ID
+https://www.youtube.com/embed/VIDEO_ID
+VIDEO_ID (11-character string directly)
+```
 
 ---
-
-## Chat Flow
-
-    User types message
-           ↓
-    Client emits chat_message
-           ↓
-    Server validates message
-           ↓
-    Server identifies participant
-           ↓
-    Message stored in room
-           ↓
-    Server broadcasts chat_message
-           ↓
-    All room members receive it
-
-A chat message contains:
-
-    {
-      id,
-      userId,
-      username,
-      role,
-      message,
-      timestamp
-    }
-
----
-
-## Chat Persistence Behavior
-
-Messages belong to the room rather than to the participant.
-
-Therefore, when a participant leaves:
-
-    Participant leaves
-           ↓
-    Participant removed
-           ↓
-    Their messages remain
-
-If the same room continues to exist and the participant rejoins, recent messages can still be available.
-
-When the room becomes completely empty, the room itself is removed from memory, so its messages are removed as well.
-
-A server restart also clears room and chat state because the current implementation is memory-based.
-
----
-
-# Participant Management
-
-The Host can manage participants through the participant panel.
-
-Available actions include:
-
-    Participant → Make Moderator
-    Moderator   → Remove Moderator
-    Participant → Remove
-    Moderator   → Remove
-
-Role changes are broadcast to the room using:
-
-    role_updated
-
-The frontend then updates the participant list and available controls.
-
----
-
-# Host Transfer
-
-Host transfer is partially implemented.
-
-When the current Host leaves the room, the server detects that there is no longer a Host and promotes another participant.
-
-The current implementation selects the first remaining participant and assigns the `host` role.
-
-The room is then notified of the role change.
-
-Current flow:
-
-    Host leaves
-        ↓
-    Server removes Host
-        ↓
-    Check for remaining Host
-        ↓
-    No Host exists
-        ↓
-    Promote next participant
-        ↓
-    Broadcast role_updated
-
-The Host transfer behavior will be tested and finalized as part of the final reliability pass.
-
-A future version could allow the Host to explicitly select another participant and transfer the role before leaving.
-
----
-
-# Removing Participants
-
-The Host can remove another participant.
-
-The flow is:
-
-    Host
-     ↓
-    Remove participant
-     ↓
-    Server validates Host permission
-     ↓
-    Target participant notified
-     ↓
-    Target socket leaves room
-     ↓
-    Participant removed from room state
-     ↓
-    Remaining users receive user_left
-
-The removed participant is returned to the lobby.
-
-Their chat messages are not deleted from the room's history.
-
----
-
-# Leaving and Disconnecting
-
-There are two ways for a user to leave.
-
-## Explicit Leave
-
-The user clicks:
-
-    Leave Session
-
-The client emits:
-
-    leave_room
-
-The server removes the participant and broadcasts the departure.
-
-## Socket Disconnect
-
-Socket.IO also handles unexpected disconnections.
-
-The server performs room cleanup when a socket disconnects.
-
-Host disconnection also triggers the Host transfer logic described above.
-
----
-
-# Browser Refresh
-
-## Current Issue
-
-Browser refresh currently causes the React application to lose its in-memory frontend room state.
-
-The Socket.IO connection is also recreated after the page reload.
-
-The current application therefore returns the user to the lobby after a refresh.
-
-Current behavior:
-
-    Inside room
-        ↓
-    Browser refresh
-        ↓
-    React state resets
-        ↓
-    Socket reconnects with a new connection
-        ↓
-    Lobby
-
-## Planned Fix
-
-Session recovery will be added so that the application can remember:
-
-    Room ID
-    Username
-    Client identity
-
-and reconnect the user to their previous room.
-
-The server will remain authoritative over the user's role.
-
-The intended behavior is:
-
-    Host
-      ↓
-    Refresh
-      ↓
-    Reconnect
-      ↓
-    Same room
-      ↓
-    Still Host
-
-The same behavior should apply to Moderators and Participants.
-
-Explicitly leaving the room will clear the saved session.
-
----
-
-# Playback Position Synchronization
-
-Basic playback synchronization is implemented, but join-time playback position synchronization is still part of the final reliability pass.
-
-The required behavior is:
-
-    Host is watching at 05:32
-            ↓
-    Participant joins
-            ↓
-    Participant receives current video state
-            ↓
-    Video loads
-            ↓
-    Player seeks to approximately 05:32
-            ↓
-    Player follows current play/pause state
-
-The room already tracks:
-
-    currentTime
-    playing
-    lastUpdatedAt
-
-The next step is to calculate the estimated current position when a user joins while playback is active.
-
-Conceptually:
-
-    estimatedTime =
-    currentTime +
-    time elapsed since lastUpdatedAt
-
-This prevents a user joining a currently playing video from starting at an outdated position.
-
----
-
-# WebSocket Event Architecture
-
-Socket.IO is responsible for all real-time room communication.
-
-## Client → Server
-
-| Event | Purpose |
-|------|---------|
-| `create_room` | Create a new room |
-| `join_room` | Join an existing room |
-| `leave_room` | Leave the current room |
-| `play` | Request playback |
-| `pause` | Request pause |
-| `seek` | Request playback position change |
-| `change_video` | Change the current YouTube video |
-| `assign_role` | Assign Moderator/Participant role |
-| `remove_participant` | Remove a participant |
-| `chat_message` | Send a chat message |
-
----
-
-## Server → Client
-
-| Event | Purpose |
-|------|---------|
-| `room_created` | Return newly created room state |
-| `room_state` | Send state to a joining client |
-| `user_joined` | Notify existing users |
-| `user_left` | Notify users of a departure |
-| `play` | Synchronize playback |
-| `pause` | Synchronize pause |
-| `seek` | Synchronize playback position |
-| `video_changed` | Synchronize video changes |
-| `role_updated` | Update participant roles |
-| `participant_removed` | Notify a removed participant |
-| `permission_denied` | Reject unauthorized actions |
-| `error` | Report invalid requests |
-| `chat_message` | Broadcast chat messages |
-
----
-
-# Example Real-Time Flow
-
-Suppose the Host presses Play.
-
-    ┌───────────────┐
-    │ Host Browser  │
-    └───────┬───────┘
-            │
-            │ socket.emit("play")
-            ▼
-    ┌───────────────┐
-    │ Node Server   │
-    └───────┬───────┘
-            │
-            │ Check room
-            │ Check participant
-            │ Check role
-            ▼
-    ┌───────────────┐
-    │ Room State    │
-    │ playing=true  │
-    └───────┬───────┘
-            │
-            │ broadcast
-            ▼
-    ┌───────────────────────────────┐
-    │ Moderator / Participants     │
-    │                               │
-    │ receive "play"                │
-    │ call player.playVideo()       │
-    └───────────────────────────────┘
-
-This approach keeps the server as the authority for room-level playback state.
-
----
-
-# Frontend Architecture
-
-The frontend is built using React and Vite.
-
-Current structure:
-
-    client/
-    ├── public/
-    ├── src/
-    │   ├── assets/
-    │   │
-    │   ├── components/
-    │   │   ├── CreateRoom.jsx
-    │   │   ├── JoinRoom.jsx
-    │   │   ├── Room.jsx
-    │   │   └── VideoPlayer.jsx
-    │   │
-    │   ├── App.css
-    │   ├── App.jsx
-    │   ├── Index.css
-    │   ├── main.jsx
-    │   └── socket.js
-    │
-    ├── index.html
-    ├── package.json
-    ├── package-lock.json
-    └── vite.config.js
-
-## Main Components
-
-### `App.jsx`
-
-Responsible for high-level application state and switching between:
-
-    Lobby
-    Room
-
-It receives room creation/join responses and renders the Room component with the initial room state.
-
-### `CreateRoom.jsx`
-
-Provides the room creation form and emits the `create_room` event.
-
-### `JoinRoom.jsx`
-
-Provides the room joining form and emits the `join_room` event.
-
-### `Room.jsx`
-
-Acts as the main room orchestrator.
-
-It handles:
-
-- Participant state
-- Roles
-- Room controls
-- Socket.IO room events
-- Chat
-- Video state changes
-- Participant management
-- Room leaving
-
-### `VideoPlayer.jsx`
-
-Encapsulates the YouTube IFrame API.
-
-It handles:
-
-- YouTube player creation
-- Video loading
-- Playback state events
-- Player controls
-- YouTube URL/video ID handling
-
-### `socket.js`
-
-Creates the Socket.IO client connection used by the React application.
-
----
-
-# Backend Architecture
-
-The backend uses Node.js, Express, and Socket.IO.
-
-Current structure:
-
-    server/
-    ├── src/
-    │   ├── index.js
-    │   ├── permissions.js
-    │   └── rooms.js
-    │
-    ├── package.json
-    └── package-lock.json
-
-## `index.js`
-
-Main backend entry point.
-
-Responsibilities:
-
-- Create Express application
-- Create HTTP server
-- Create Socket.IO server
-- Register Socket.IO events
-- Validate permissions
-- Broadcast room events
-- Serve production frontend
-- Provide health endpoint
-
-## `rooms.js`
-
-Responsible for the in-memory room store and room operations.
-
-It provides helpers for:
-
-- Creating rooms
-- Getting rooms
-- Adding participants
-- Removing participants
-- Getting participants
-- Managing chat messages
-
-## `permissions.js`
-
-Contains the role permission map.
-
-The permission system follows the pattern:
-
-    Role
-     ↓
-    Allowed actions
-     ↓
-    can(role, action)
-
-This keeps authorization logic separate from the individual Socket.IO event handlers.
-
----
-
-# Production Architecture
-
-The intended production deployment uses a single full-stack Node.js service.
-
-    Internet
-        │
-        ▼
-    ┌───────────────────┐
-    │      Render       │
-    │                   │
-    │ Node + Express    │
-    │ Socket.IO         │
-    │ React build       │
-    └─────────┬─────────┘
-              │
-       ┌──────┴──────┐
-       │             │
-       ▼             ▼
-    React client   Socket.IO
-    client/dist    WebSocket
-       │             │
-       └──────┬──────┘
-              ▼
-           Browser
-
-Express serves the React production build.
-
-The same server handles:
-
-    GET /
-    GET /assets/*
-    GET /api/health
-    /socket.io/*
-
-This avoids having to deploy the frontend and WebSocket backend as completely separate services.
-
----
-
-# Production Build
-
-The frontend is built using Vite.
-
-The production build creates:
-
-    client/dist/
-
-The Express server serves this directory when:
-
-    NODE_ENV=production
-
-is enabled.
-
-The expected production flow is:
-
-    npm run build
-          ↓
-    client/dist
-          ↓
-    Express serves dist
-          ↓
-    Render starts Node server
-          ↓
-    Public application URL
-
----
-
-# Environment Variables
-
-The backend supports:
-
-    PORT
-    NODE_ENV
-    CLIENT_ORIGIN
-
-## `PORT`
-
-The server uses:
-
-    process.env.PORT || 3001
-
-This allows hosting platforms such as Render to provide the production port automatically.
-
-## `NODE_ENV`
-
-Production mode enables serving the React build:
-
-    NODE_ENV=production
-
-## `CLIENT_ORIGIN`
-
-The Socket.IO CORS configuration can use:
-
-    CLIENT_ORIGIN
-
-to specify the frontend origin.
-
-During local development, the frontend runs on the Vite development server.
-
----
-
-# Local Development
-
-## Prerequisites
-
-Install:
-
-- Node.js
-- npm
-- Git
-
----
-
-## Clone the repository
-
-    git clone <repository-url>
-    cd yt-wp
-
----
-
-# Start the Backend
-
-Open a terminal:
-
-    cd server
-    npm install
-    npm run dev
-
-The backend runs on the configured development port, normally:
-
-    http://localhost:3001
-
-Health check:
-
-    http://localhost:3001/api/health
-
-Expected response:
-
-    {
-      "ok": true
-    }
-
----
-
-# Start the Frontend
-
-Open another terminal:
-
-    cd client
-    npm install
-    npm run dev
-
-Vite will provide the local frontend URL, normally:
-
-    http://localhost:5173
-
----
-
-# Production Build Locally
-
-Build the frontend:
-
-    cd client
-    npm run build
-
-Then run the backend in production mode.
-
-On Windows PowerShell:
-
-    $env:NODE_ENV="production"
-    npm start
-
-On macOS/Linux:
-
-    NODE_ENV=production npm start
-
-The Express server will serve the React production build.
-
----
-
-# Testing Strategy
-
-The application should be tested with multiple browser sessions because the main functionality is real-time and multi-user.
-
-A recommended local test setup is:
-
-    Chrome
-      → Host
-
-    Chrome Incognito
-      → Moderator
-
-    Edge / Firefox
-      → Participant
-
----
-
-# Core Test Cases
-
-## Room
-
-- Create a room
-- Join a valid room
-- Attempt to join an invalid room
-- Create with an empty username
-- Multiple participants in the same room
-
-## Roles
-
-- Host is assigned automatically
-- Participant joins with Participant role
-- Host promotes Participant to Moderator
-- Host demotes Moderator
-- Participant cannot assign roles
-- Moderator cannot assign roles
-- Host cannot be removed
-
-## Playback
-
-- Host plays video
-- Host pauses video
-- Host seeks
-- Host changes video
-- Moderator plays video
-- Moderator pauses video
-- Moderator seeks
-- Moderator changes video
-- Participant cannot control playback
-- Playback remains synchronized across clients
-- New participant receives the correct playback position
-
-## Participants
-
-- User joins
-- User leaves
-- User disconnects
-- Host leaves
-- Host transfer occurs
-- Participant can be removed
-- Removed participant returns to lobby
 
 ## Chat
 
-- Host sends a message
-- Moderator sends a message
-- Participant sends a message
-- Messages appear for all users
-- Messages have timestamps
-- Empty messages are rejected
-- Messages over 500 characters are rejected
-- User leaving does not remove their previous messages
-- Recent chat history is available to users joining the room
+Real-time room chat available to all roles.
 
-## Refresh
+- Messages broadcast instantly via Socket.IO
+- Each message includes username, role badge, and timestamp
+- Latest 50 messages stored per room
+- New joiners receive the recent chat history
+- Messages cap at 500 characters; empty messages are ignored
+- Messages belong to the room, not the sender — leaving does not delete your previous messages
+- Send with Enter key or the Send button
 
-- Host refresh
-- Moderator refresh
-- Participant refresh
-- User explicitly leaves
-- User refreshes after explicitly leaving
+### Chat Flow
 
----
-
-# Development Issues Encountered
-
-## 1. Moderator Playback Loop
-
-### Problem
-
-When a participant was promoted to Moderator, playback could enter a repeated play/pause cycle.
-
-The underlying issue was related to the difference between:
-
-    User-originated YouTube events
-
-and:
-
-    Server-originated synchronization events
-
-A remote `playVideo()` or `pauseVideo()` call can trigger YouTube's state-change event, which could then be mistaken for another user action.
-
-### Fix
-
-A suppression reference was added to distinguish remote commands from genuine local interactions.
-
-This prevents a server-originated playback update from immediately generating another Socket.IO playback event.
-
----
-
-## 2. Browser Refresh
-
-### Problem
-
-Refreshing the browser resets React state.
-
-The previous room information was stored in React state, so a refresh caused:
-
-    React state reset
-         ↓
-    roomData = null
-         ↓
-    Lobby rendered
-
-The Socket.IO connection is also recreated during the page reload.
-
-### Planned Fix
-
-A reconnect/session recovery mechanism will preserve the user's room identity across refreshes while keeping the server authoritative over the user's role.
-
----
-
-## 3. Join-Time Playback Position
-
-### Problem
-
-The current room state stores the last known playback position, but a newly joining participant needs the estimated current position if the video is actively playing.
-
-For example:
-
-    Server last recorded:
-    05:00
-
-    Host continues playing for:
-    20 seconds
-
-    New participant joins:
-    should start around 05:20
-
-### Planned Fix
-
-Use:
-
-    currentTime
-    +
-    time elapsed since lastUpdatedAt
-
-when the room is actively playing.
-
-This will allow users joining an active session to start much closer to the current playback position.
-
----
-
-# Design Decisions
-
-## Why React?
-
-React provides a straightforward way to manage:
-
-- Room state
-- Participant state
-- Role-based UI
-- Chat messages
-- Video state
-- Socket event updates
-
-The UI can react immediately when Socket.IO events update application state.
-
----
-
-## Why Socket.IO?
-
-Socket.IO provides bidirectional real-time communication between the browser and Node.js server.
-
-This is particularly useful for a watch party because playback actions need to propagate immediately.
-
-For example:
-
-    Host pauses
+```
+User types message → socket.emit("chat_message")
        ↓
-    Socket.IO
+Server validates: non-empty, ≤ 500 chars, participant exists
        ↓
-    Server
+Message stored in room (capped at 50)
        ↓
-    All room clients
+io.to(roomId).emit("chat_message", { id, userId, username, role, message, timestamp })
        ↓
-    Pause locally
-
-It also provides room-based broadcasting through Socket.IO rooms.
-
----
-
-## Why Express?
-
-Express is used for:
-
-- Running the HTTP server
-- Health checks
-- Serving the production React build
-
-It also works naturally alongside Socket.IO using the same HTTP server.
+All room members render the message
+```
 
 ---
 
-## Why In-Memory Storage?
+## Emoji Reactions
 
-The project is primarily a real-time synchronization exercise.
+Users can react with one of six emojis during playback:
 
-Using an in-memory store makes it easy to understand:
+**❤️ 😂 😮 🔥 👏 💀**
 
-    Room
-     ├── Participants
-     ├── Video State
-     └── Chat
+Reactions appear as floating animations in the chat panel, showing the sender's username and drifting upward before fading. Each reaction auto-removes after 5 seconds. The allowed emoji set is validated on the server — arbitrary emoji strings are rejected.
 
-without adding database configuration and persistence complexity that is not necessary for the MVP.
+### Reaction Flow
 
-The trade-off is that rooms do not survive server restarts.
-
----
-
-## Why Keep Authorization on the Server?
-
-Frontend restrictions are useful for user experience, but they cannot be trusted for security.
-
-A malicious client could still manually emit:
-
-    change_video
-
-even if the UI doesn't display the control.
-
-Therefore, the server checks:
-
-    socket
-      ↓
-    room
-      ↓
-    participant
-      ↓
-    role
-      ↓
-    permission
-
-before processing restricted actions.
+```
+User clicks emoji → socket.emit("emoji_reaction", { emoji })
+       ↓
+Server validates: participant exists, emoji is in allowed list
+       ↓
+io.to(roomId).emit("emoji_reaction", { id, userId, username, emoji, timestamp })
+       ↓
+All clients animate the reaction
+```
 
 ---
-
-# Security Considerations
-
-The current application is an internship MVP and does not implement user authentication.
-
-The following protections are implemented at the application level:
-
-- Server-side role validation
-- Server-side permission enforcement
-- Username validation
-- Room existence validation
-- YouTube video ID validation
-- Chat message validation
-- Chat length limit
-- Host protection from removal
-- Invalid role protection
-- Participant existence checks
-
-Future production hardening could include:
-
-- Authentication
-- Rate limiting
-- Persistent user identity
-- Input sanitization
-- Persistent database storage
-- More robust room ownership
-- Abuse prevention
-
----
-
-# Current Limitations
-
-The current MVP intentionally has several limitations.
-
-## No Authentication
-
-Users identify themselves using a username.
-
-There are no accounts or passwords.
-
-## No Persistent Rooms
-
-Rooms exist only in server memory.
-
-A server restart clears all rooms.
-
-## Single Server
-
-The application currently assumes one Node.js server instance.
-
-A horizontally scaled version would require shared state and a Socket.IO adapter such as Redis.
-
-## No Database
-
-Room state and chat messages are stored in memory.
 
 ## Browser Refresh Recovery
 
-Session recovery is currently being finalized.
+When a user refreshes the browser, they automatically return to the same room with their role preserved. No login, no manual re-join.
 
-## Join-Time Position Sync
+### How It Works
 
-Playback position estimation for users joining an actively playing room is part of the final synchronization pass.
+**Client side:**
+
+1. `socket.js` generates a stable `clientId` via `crypto.randomUUID()` on first load and persists it in `localStorage`. This ID never changes for a given browser.
+2. The `clientId` is sent to the server as a Socket.IO handshake query parameter on every connection.
+3. After a successful room join or create, `App.jsx` saves `{ roomId, username }` to `sessionStorage`.
+4. On page load, if a saved session exists, the client emits `reconnect_room` instead of showing the lobby.
+5. If the server confirms the reconnect, the Room view is restored. If the room no longer exists, the session is cleared and the lobby is shown.
+
+**Server side:**
+
+1. On disconnect, the server does **not** immediately remove the participant. Instead it starts an **8-second grace period timer**.
+2. Each participant record stores the `clientId` alongside `socket.id`, `username`, and `role`.
+3. If `reconnect_room` arrives within the grace period with a matching `clientId`, the timer is cancelled, the participant's `socket.id` is updated to the new connection, and `room_state` is sent back — with the **original role intact**. The client never sends or claims a role.
+4. If the grace period expires without a reconnect, the participant is evicted normally and host transfer logic runs if needed.
+
+**What this means in practice:**
+
+| Scenario | Result |
+|---|---|
+| Host refreshes | Returns as Host within ~1 second |
+| Moderator refreshes | Returns as Moderator with role preserved |
+| Participant refreshes | Returns as Participant |
+| User clicks "Leave Session" | Session cleared — refresh goes to lobby |
+| Tab closed for > 8 seconds | Participant evicted, room cleans up normally |
+| Room disappears while refreshing | Session cleared, lobby shown |
+
+**Security note:** The role is never read from `localStorage` or sent by the client. The server looks up the role from its own memory using the `clientId`. A user cannot claim a role by modifying local storage.
+
+### Reconnect Flow Diagram
+
+```
+Browser refresh
+       ↓
+New socket.id assigned
+clientId unchanged (localStorage)
+       ↓
+socket.js sends clientId as handshake query
+       ↓
+App.jsx reads sessionStorage → { roomId, username }
+       ↓
+socket.emit("reconnect_room", { roomId, username })
+       ↓
+Server finds participant by clientId
+       ↓
+Cancel grace period timer
+Update socket.id reference
+       ↓
+socket.emit("room_state", { ..., createdAt })
+       ↓
+App.jsx restores Room view with original role
+```
 
 ---
 
-# Future Improvements
+## Room Stopwatch
 
-Possible future improvements include:
+A live stopwatch is displayed in the top header to the left of the theme toggle button. It shows how long the room has been active in `MM:SS` format (switching to `HH:MM:SS` after one hour).
 
-- User authentication
-- Persistent rooms
-- PostgreSQL / MongoDB / SQLite storage
-- Explicit Host transfer UI
-- Redis Socket.IO adapter
-- Multiple backend instances
-- Room moderation tools
-- Chat moderation
-- Reactions
-- Video queue / playlist
-- Watch history
-- User profiles
-- Improved reconnection handling
-- Rate limiting
-
-These are intentionally outside the current MVP scope.
+- The timer starts from when the room was **created**, not from when the current user joined
+- The `createdAt` Unix timestamp is set by the server at room creation time and included in every `room_state` and `room_created` response
+- Users who join mid-session see the correct elapsed time immediately
+- After a page refresh, the timer continues from the correct server-authoritative start time
+- The stopwatch only appears while inside a room and disappears when the user leaves
 
 ---
 
-# Project Structure
+## Preventing Playback Event Loops
 
-    yt-wp/
+A known challenge with the YouTube IFrame API is that calling `playVideo()` or `pauseVideo()` programmatically triggers the same `onStateChange` event as a real user interaction.
+
+Without protection this creates a loop:
+
+```
+Server broadcasts "play"
+       ↓
+Client calls player.playVideo()
+       ↓
+YouTube fires onStateChange(PLAYING)
+       ↓
+Client thinks user pressed play
+       ↓
+Client emits "play" to server
+       ↓
+Server broadcasts "play" again
+       ↓
+...
+```
+
+**Fix:** A `suppressRef` is set before any programmatic player call. When `onStateChange` fires, if suppression is active the event is discarded and the ref is cleared. Only genuine user interactions (no active suppression) emit events back to the server.
+
+```
+Remote "play" received
+       ↓
+suppressRef.current = "play"
+       ↓
+player.playVideo()
+       ↓
+onStateChange(PLAYING) fires
+       ↓
+suppressRef active → discard, clear ref
+       ↓
+No duplicate emit sent
+```
+
+---
+
+## Host Transfer
+
+When a Host disconnects or explicitly leaves, the server checks whether any Host remains in the room. If not, it promotes the next participant in the room's participant map and broadcasts `role_updated` to everyone.
+
+With browser refresh recovery, the Host's record stays intact during the 8-second grace period — so a Host refresh does **not** trigger a premature promotion.
+
+```
+Host leaves (or grace period expires)
+       ↓
+removeParticipant(roomId, socketId)
+       ↓
+No Host found in remaining participants
+       ↓
+Promote first remaining participant → "host"
+       ↓
+io.to(roomId).emit("role_updated", { targetId, role: "host" })
+```
+
+---
+
+## Room State
+
+Rooms are stored in server memory. A complete room object:
+
+```json
+{
+  "id": "ABC123",
+  "createdAt": 1693000000000,
+  "participants": {
+    "socketId": {
+      "id": "socketId",
+      "clientId": "uuid-from-browser",
+      "username": "Ayush",
+      "role": "host"
+    }
+  },
+  "videoState": {
+    "videoId": "dQw4w9WgXcQ",
+    "playing": false,
+    "currentTime": 0,
+    "lastUpdatedAt": 1693000000000
+  },
+  "messages": []
+}
+```
+
+`clientId` is the stable browser identity used for reconnect matching. It is separate from `socket.id`, which changes on every connection.
+
+---
+
+## WebSocket Event Architecture
+
+### Client → Server
+
+| Event | Payload | Permission |
+|-------|---------|------------|
+| `create_room` | `{ username }` | Anyone |
+| `join_room` | `{ roomId, username }` | Anyone |
+| `reconnect_room` | `{ roomId, username }` | Anyone |
+| `leave_room` | — | Anyone |
+| `play` | — | Host, Moderator |
+| `pause` | — | Host, Moderator |
+| `seek` | `{ time }` | Host, Moderator |
+| `change_video` | `{ videoId }` | Host, Moderator |
+| `assign_role` | `{ targetId, role }` | Host |
+| `remove_participant` | `{ targetId }` | Host |
+| `chat_message` | `{ message }` | Anyone in room |
+| `emoji_reaction` | `{ emoji }` | Anyone in room |
+
+### Server → Client
+
+| Event | Payload | When |
+|-------|---------|------|
+| `room_created` | `{ roomId, roomState }` | After create_room |
+| `room_state` | `{ roomId, participants, videoState, messages, createdAt }` | After join / reconnect |
+| `user_joined` | `{ participant }` | New user enters |
+| `user_left` | `{ participantId }` | User leaves or is removed |
+| `role_updated` | `{ targetId, role }` | Role assignment changes |
+| `play` | — | Playback started |
+| `pause` | — | Playback paused |
+| `seek` | `{ time }` | Playback position changed |
+| `video_changed` | `{ videoId }` | Video changed |
+| `chat_message` | `{ id, userId, username, role, message, timestamp }` | Chat message sent |
+| `emoji_reaction` | `{ id, userId, username, emoji, timestamp }` | Emoji reaction sent |
+| `participant_removed` | — | You were removed by Host |
+| `permission_denied` | `{ action }` | Unauthorized action attempted |
+| `reconnect_failed` | `{ message }` | Room gone, reconnect impossible |
+| `error` | `{ message }` | Invalid request |
+
+---
+
+## Frontend Architecture
+
+Built with React 19 and Vite 8.
+
+```
+client/
+├── public/
+│   ├── favicon.svg
+│   └── icons.svg
+├── src/
+│   ├── assets/
+│   ├── components/
+│   │   ├── CreateRoom.jsx     # Room creation form
+│   │   ├── JoinRoom.jsx       # Room join form
+│   │   ├── Room.jsx           # Main room orchestrator
+│   │   └── VideoPlayer.jsx    # YouTube IFrame wrapper
+│   ├── App.css                # All application styles + theming
+│   ├── App.jsx                # Top-level state, routing, Stopwatch
+│   ├── index.css              # CSS reset and design tokens
+│   ├── main.jsx               # React entry point
+│   └── socket.js              # Socket.IO client + clientId generation
+├── index.html
+├── package.json
+└── vite.config.js
+```
+
+### Component Responsibilities
+
+**`App.jsx`**
+- Top-level screen routing (lobby / room)
+- Session save/restore via `sessionStorage`
+- Auto-reconnect on page load
+- `Stopwatch` component (inline, reads server `createdAt`)
+- Theme toggle with `localStorage` persistence
+- Connection status indicator
+
+**`socket.js`**
+- Generates and persists `clientId` via `crypto.randomUUID()` in `localStorage`
+- Creates the Socket.IO connection with `clientId` in the handshake query
+- Exported as a singleton used across all components
+
+**`Room.jsx`**
+- Participant list with role badges
+- Host management actions (promote, demote, remove)
+- Video URL input and change video button (Host/Moderator only)
+- YouTube player integration with suppression logic
+- Chat panel with message history and input
+- Emoji reaction bar and floating animation rendering
+- All Socket.IO room event listeners
+
+**`VideoPlayer.jsx`**
+- Dynamically loads the YouTube IFrame API script
+- Creates and manages the `YT.Player` instance
+- Fires `yt-state-change` custom events for `Room.jsx` to consume
+- Overlays a transparent div for Participants to block direct player interaction
+
+**`CreateRoom.jsx` / `JoinRoom.jsx`**
+- Thin forms that emit `create_room` / `join_room`
+- Pass `createdAt` from server response through to `App.jsx`
+
+---
+
+## Backend Architecture
+
+Built with Node.js, Express 4, and Socket.IO 4.
+
+```
+server/
+├── src/
+│   ├── index.js          # Express + Socket.IO entry point
+│   ├── permissions.js    # Role → allowed actions map
+│   └── rooms.js          # In-memory room store
+├── package.json
+└── package-lock.json
+```
+
+### `index.js`
+
+Handles all Socket.IO events:
+
+- Room lifecycle: `create_room`, `join_room`, `reconnect_room`, `leave_room`
+- Playback: `play`, `pause`, `seek`, `change_video`
+- Roles: `assign_role`, `remove_participant`
+- Chat: `chat_message`
+- Reactions: `emoji_reaction`
+- Disconnect with 8-second grace period before eviction
+
+Also serves the React production build and the `/api/health` endpoint.
+
+### `rooms.js`
+
+In-memory store with helper functions:
+
+| Function | Purpose |
+|----------|---------|
+| `createRoom(socket, username)` | Create room, assign Host, set `createdAt` |
+| `getRoom(roomId)` | Look up a room |
+| `addParticipant(roomId, socketId, username, clientId)` | Add a Participant |
+| `removeParticipant(roomId, socketId)` | Remove and trigger host promotion if needed |
+| `findParticipantByClientId(roomId, clientId)` | Locate a participant by browser identity (used for reconnect) |
+| `reconnectParticipant(roomId, oldSocketId, newSocketId)` | Re-key participant record to new socket |
+| `getParticipant(roomId, socketId)` | Get a single participant |
+| `getRoomParticipants(roomId)` | Get all participants as an array |
+| `addMessage(roomId, message)` | Add chat message, cap at 50 |
+| `getMessages(roomId)` | Get chat history |
+
+### `permissions.js`
+
+```javascript
+const PERMISSIONS = {
+  host:        ["play", "pause", "seek", "change_video", "assign_role", "remove_participant"],
+  moderator:   ["play", "pause", "seek", "change_video"],
+  participant: [],
+};
+
+function can(role, action) {
+  return PERMISSIONS[role]?.includes(action) ?? false;
+}
+```
+
+Keeping this separate means adding or removing a permission is a one-line change in one file.
+
+---
+
+## Production Architecture
+
+A single Node.js process serves both the API and the built React frontend.
+
+```
+Internet
     │
-    ├── client/
-    │   ├── public/
-    │   ├── src/
-    │   │   ├── assets/
-    │   │   │
-    │   │   ├── components/
-    │   │   │   ├── CreateRoom.jsx
-    │   │   │   ├── JoinRoom.jsx
-    │   │   │   ├── Room.jsx
-    │   │   │   └── VideoPlayer.jsx
-    │   │   │
-    │   │   ├── App.css
-    │   │   ├── App.jsx
-    │   │   ├── Index.css
-    │   │   ├── main.jsx
-    │   │   └── socket.js
-    │   │
-    │   ├── index.html
-    │   ├── package.json
-    │   ├── package-lock.json
-    │   └── vite.config.js
-    │
-    ├── server/
-    │   ├── src/
-    │   │   ├── index.js
-    │   │   ├── permissions.js
-    │   │   └── rooms.js
-    │   │
-    │   ├── package.json
-    │   └── package-lock.json
-    │
-    ├── .gitignore
-    ├── package.json
-    └── README.md
+    ▼
+┌─────────────────────┐
+│        Render       │
+│  Node.js + Express  │
+│  Socket.IO          │
+│  client/dist (SPA)  │
+└──────────┬──────────┘
+           │
+    ┌──────┴──────┐
+    ▼             ▼
+ GET /        /socket.io/*
+ (React SPA)  (WebSocket)
+```
+
+Express serves `client/dist` as static files. All `GET` routes fall back to `index.html` so React Router (if added later) works correctly. The same HTTP server upgrades WebSocket connections for Socket.IO.
+
+### Production Build
+
+```bash
+# Build the frontend
+cd client && npm run build
+
+# Run the server in production mode
+# macOS / Linux
+NODE_ENV=production node src/index.js
+
+# Windows PowerShell
+$env:NODE_ENV="production"; node src/index.js
+```
 
 ---
 
-# Assessment Requirements
+## Local Development
 
-The project was developed around the required Watch Party functionality:
+### Prerequisites
 
-- Real-time synchronization
-- Room-based model
-- YouTube integration
-- WebSockets
-- Role-based access control
-- Host role management
-- Participant management
-- Playback restrictions
-- Play/pause synchronization
-- Seek synchronization
-- Video change synchronization
-- Basic chat
-- Production deployment
+- Node.js ≥ 20
+- npm
+- Git
 
-The final deployment will provide a publicly accessible URL where the core room, role, and playback functionality can be tested.
+### Setup
 
----
+```bash
+git clone <repository-url>
+cd yt-wp
+```
 
-# Technology Stack
+**Terminal 1 — Backend:**
 
-## Frontend
+```bash
+cd server
+npm install
+npm run dev
+```
 
-- React
-- Vite
-- JavaScript
-- CSS
+Server runs at `http://localhost:3001`
 
-## Backend
+Health check: `http://localhost:3001/api/health` → `{ "ok": true }`
 
-- Node.js
-- Express
+**Terminal 2 — Frontend:**
 
-## Real-Time Communication
+```bash
+cd client
+npm install
+npm run dev
+```
 
-- Socket.IO
+Frontend runs at `http://localhost:5173`
 
-## Video
+Vite proxies `/socket.io` and `/api` to the backend automatically via `vite.config.js` — no CORS issues in development.
 
-- YouTube IFrame Player API
+### Testing with Multiple Users
 
-## Storage
+The core functionality requires multiple browser sessions. Recommended setup:
 
-- In-memory JavaScript object
-
-## Deployment
-
-- Render
-- Node.js production server
-- Vite production build
+| Browser | Role |
+|---------|------|
+| Chrome (normal) | Host |
+| Chrome Incognito | Moderator |
+| Firefox or Edge | Participant |
 
 ---
 
-# Status
+## Environment Variables
 
-Current development status:
-
-    Room Creation              ✓
-    Room Joining               ✓
-    Participant List           ✓
-    Host Role                  ✓
-    Moderator Role             ✓
-    Participant Role           ✓
-    Role Assignment            ✓
-    Role Enforcement            ✓
-    Remove Participant         ✓
-    Play Synchronization       ✓
-    Pause Synchronization      ✓
-    Seek Synchronization       ✓
-    Change Video               ✓
-    YouTube Integration        ✓
-    Chat                       ✓
-    Host Transfer              In progress / verification
-    Browser Refresh Recovery   In progress
-    Join-Time Position Sync    In progress
-    README                     ✓
-    Production Build           Pending
-    Production Deployment      Pending
-    Final Live Testing         Pending
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `3001` | Server port (Render sets this automatically) |
+| `NODE_ENV` | — | Set to `production` to serve the React build |
+| `CLIENT_ORIGIN` | `http://localhost:5173` | CORS origin for Socket.IO |
 
 ---
 
-# Final Development Checklist
+## Technology Stack
 
-Before considering the project complete:
-
-- [ ] Verify browser refresh recovery for Host
-- [ ] Verify browser refresh recovery for Moderator
-- [ ] Verify browser refresh recovery for Participant
-- [ ] Implement/finalize join-time playback position synchronization
-- [ ] Verify Host transfer behavior
-- [ ] Test all RBAC restrictions
-- [ ] Test playback synchronization with multiple browsers
-- [ ] Test Chat with multiple users
-- [ ] Create production build
-- [ ] Deploy backend/frontend
-- [ ] Verify Socket.IO in production
-- [ ] Test the live application
-- [ ] Add final live URL to this README
-- [ ] Push final version to GitHub
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 19, Vite 8, JavaScript (ESM), CSS |
+| Backend | Node.js, Express 4 |
+| Real-time | Socket.IO 4 |
+| Video | YouTube IFrame Player API |
+| Storage | In-memory (JavaScript object) |
+| Deployment | Render (Node.js + static) |
 
 ---
 
-# License
+## Security Considerations
+
+This is an MVP without authentication. The following protections are in place:
+
+**Server-enforced:**
+- Role validation on every restricted event
+- `clientId` used for reconnect identity — role is never trusted from the client
+- Host cannot be removed or have their role changed by anyone
+- Invalid roles rejected on `assign_role`
+- YouTube video IDs validated before storing
+- Chat messages validated (type, length, non-empty)
+- Emoji reactions validated against a server-side allowlist
+- Room existence checked on every event
+
+**Client-side (UX only, not security):**
+- Playback controls hidden for Participants
+- Video URL input hidden for Participants
+- Role management buttons hidden for non-Hosts
+
+**Future hardening for production:**
+- User authentication (JWT or sessions)
+- Rate limiting on Socket.IO events
+- Input sanitization
+- Persistent storage with proper access controls
+- Redis adapter for horizontal scaling
+
+---
+
+## Design Decisions
+
+### Why no database?
+
+The application is a real-time synchronization exercise. Room state fits naturally in memory on the server. Adding a database would increase complexity without improving the core functionality being demonstrated. The trade-off is that rooms do not survive server restarts, which is acceptable for this use case.
+
+### Why sessionStorage for the saved session?
+
+`sessionStorage` is tab-scoped. Closing the tab clears it automatically, which is the right behavior — a new tab should start fresh. `localStorage` would persist across all tabs and browser restarts, which would be unexpected.
+
+### Why 8 seconds for the reconnect grace period?
+
+A browser refresh typically takes 1–3 seconds on a normal connection. 8 seconds is long enough to handle slow connections and Render's cold start latency without being so long that a genuinely disconnected user's participant slot stays open for too long.
+
+### Why keep the role on the server only?
+
+If the role were stored client-side (localStorage, cookie), a user could modify it and claim Host permissions. The `clientId` stored in localStorage is an identity token only — the server maps it to the role it has on record, which the client cannot influence.
+
+### Why Socket.IO over raw WebSockets?
+
+Socket.IO provides room-based broadcasting, automatic reconnection, and fallback transport — all needed features that would otherwise require manual implementation with raw WebSockets.
+
+---
+
+## Known Limitations
+
+| Limitation | Notes |
+|-----------|-------|
+| No authentication | Users are identified by username only |
+| No persistent rooms | Server restart clears all state |
+| Single server only | Horizontal scaling requires a Redis Socket.IO adapter |
+| No join-time position estimation | New joiners start at the last recorded position, not the live estimated position |
+| No explicit host transfer UI | Host must leave to trigger automatic transfer |
+
+---
+
+## Future Improvements
+
+- User authentication and persistent profiles
+- PostgreSQL / Redis for persistent room and chat state
+- Explicit host transfer (Host selects a successor before leaving)
+- Join-time playback position estimation (`currentTime + elapsed since lastUpdatedAt`)
+- Video queue / playlist management
+- Rate limiting on chat and reactions
+- Redis Socket.IO adapter for multi-instance deployment
+- Room password protection
+- Watch history and user profiles
+- Mobile-optimized layout improvements
+
+---
+
+## Project Structure
+
+```
+yt-wp/
+│
+├── client/
+│   ├── public/
+│   │   ├── favicon.svg
+│   │   └── icons.svg
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── components/
+│   │   │   ├── CreateRoom.jsx
+│   │   │   ├── JoinRoom.jsx
+│   │   │   ├── Room.jsx
+│   │   │   └── VideoPlayer.jsx
+│   │   ├── App.css
+│   │   ├── App.jsx
+│   │   ├── index.css
+│   │   ├── main.jsx
+│   │   └── socket.js
+│   ├── index.html
+│   ├── package.json
+│   ├── package-lock.json
+│   └── vite.config.js
+│
+├── server/
+│   ├── src/
+│   │   ├── index.js
+│   │   ├── permissions.js
+│   │   └── rooms.js
+│   ├── package.json
+│   └── package-lock.json
+│
+├── .gitignore
+├── package.json
+└── README.md
+```
+
+---
+
+## Status
+
+```
+Room Creation                    ✓
+Room Joining                     ✓
+Participant List                 ✓
+Host Role                        ✓
+Moderator Role                   ✓
+Participant Role                 ✓
+Role Assignment                  ✓
+Role Enforcement (server-side)   ✓
+Remove Participant               ✓
+Play Synchronization             ✓
+Pause Synchronization            ✓
+Seek Synchronization             ✓
+Change Video                     ✓
+YouTube Integration              ✓
+Playback Loop Prevention         ✓
+Chat                             ✓
+Emoji Reactions                  ✓
+Host Transfer on Disconnect      ✓
+Browser Refresh Recovery         ✓
+Room Stopwatch                   ✓
+Light / Dark Theme               ✓
+Production Build                 Pending
+Production Deployment            Pending
+Final Live Testing               Pending
+Live URL in README               Pending
+```
+
+---
+
+## License
 
 MIT License
