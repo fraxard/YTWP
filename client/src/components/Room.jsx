@@ -5,9 +5,9 @@ import VideoPlayer, { extractVideoId } from "./VideoPlayer";
 const DEFAULT_VIDEO_ID = "dQw4w9WgXcQ";
 
 const ROLE_BADGE = {
-  host:        { label: "Host",       background: "#212e21", color: "#f7f8f5" },
-  moderator:   { label: "Moderator",  background: "#52634e", color: "#f7f8f5" },
-  participant: { label: "Member",     background: "#e2e6dc", color: "#586156" },
+  host: { label: "Host", background: "#212e21", color: "#f7f8f5" },
+  moderator: { label: "Moderator", background: "#52634e", color: "#f7f8f5" },
+  participant: { label: "Member", background: "#e2e6dc", color: "#586156" },
 };
 
 function RoleBadge({ role }) {
@@ -116,15 +116,17 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
       setVideoId(newId);
     }
     function onPlay() {
-      suppressRef.current = true;
+      suppressRef.current = { type: "play" };
       safeCall(() => playerRef.current.playVideo());
     }
+
     function onPause() {
-      suppressRef.current = true;
+      suppressRef.current = { type: "pause" };
       safeCall(() => playerRef.current.pauseVideo());
     }
+
     function onSeek({ time }) {
-      suppressRef.current = true;
+      suppressRef.current = { type: "seek", time };
       safeCall(() => playerRef.current.seekTo(time, true));
     }
 
@@ -154,7 +156,7 @@ export default function Room({ roomId, initialParticipants, initialVideoState, o
       if (!canControlRef.current) return;
 
       const YT_PLAYING = 1;
-      const YT_PAUSED  = 2;
+      const YT_PAUSED = 2;
 
       if (e.detail.state === YT_PLAYING) {
         const time = playerRef.current?.getCurrentTime?.() ?? 0;

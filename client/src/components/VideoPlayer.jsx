@@ -48,12 +48,35 @@ export default function VideoPlayer({ videoId, controls = true, playerRef, suppr
         events: {
           onReady: () => console.log("[YT] Player ready"),
           onStateChange: (event) => {
-            if (suppressRef.current) {
-              suppressRef.current = false;
+            const state = event.data;
+            const suppression = suppressRef.current;
+
+            if (suppression) {
+              if (
+                suppression.type === "play" &&
+                state === 1
+              ) {
+                suppressRef.current = false;
+              } else if (
+                suppression.type === "pause" &&
+                state === 2
+              ) {
+                suppressRef.current = false;
+              } else if (
+                suppression.type === "seek"
+              ) {
+                // Ignore the first state event caused by a remote seek.
+                suppressRef.current = false;
+              }
+
               return;
             }
-            const detail = { state: event.data };
-            window.dispatchEvent(new CustomEvent("yt-state-change", { detail }));
+
+            const detail = { state };
+
+            window.dispatchEvent(
+              new CustomEvent("yt-state-change", { detail })
+            );
           },
           onError: (e) => console.error("[YT] error", e.data),
         },
@@ -96,4 +119,4 @@ export default function VideoPlayer({ videoId, controls = true, playerRef, suppr
       )}
     </div>
   );
-}
+} 
