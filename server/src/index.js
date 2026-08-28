@@ -1,7 +1,7 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const path = require("path");
+// const path = require("path");
 
 const rooms = require("./rooms");
 const { can } = require("./permissions");
@@ -30,13 +30,13 @@ const pendingCleanup = new Map();
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-if (process.env.NODE_ENV === "production") {
-  const clientDist = path.join(__dirname, "../../client/dist");
-  app.use(express.static(clientDist));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(clientDist, "index.html"));
-  });
-}
+// if (process.env.NODE_ENV === "production") {
+//   const clientDist = path.join(__dirname, "../../client/dist");
+//   app.use(express.static(clientDist));
+//   app.get("*", (req, res) => {
+//     res.sendFile(path.join(clientDist, "index.html"));
+//   });
+// }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
