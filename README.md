@@ -869,10 +869,10 @@ Host Transfer on Disconnect      ✓
 Browser Refresh Recovery         ✓
 Room Stopwatch                   ✓
 Light / Dark Theme               ✓
-Production Build                 Pending
-Production Deployment            Pending
-Final Live Testing               Pending
-Live URL in README               Pending
+Production Build                 ✓
+Production Deployment            ✓
+Final Live Testing               ✓
+Live URL in README               ✓
 ```
 
 ---
