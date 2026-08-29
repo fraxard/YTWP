@@ -11,7 +11,7 @@ import VideoPlayer, {
 } from "./VideoPlayer";
 
 const DEFAULT_VIDEO_ID =
-  "dQw4w9WgXcQ";
+  "3vesigBscI8";
 
 const ROLE_BADGE = {
   host: {
